@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>EduBot v3 - University Assistant</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="app-wrapper">
+
+        <!-- Sidebar -->
+        <div class="sidebar">
+            <div class="sidebar-logo">
+                <div class="logo-icon">E</div>
+                <span class="logo-text">EduBot</span>
+                <span class="version-badge">v3</span>
+            </div>
+            <p class="sidebar-desc">University assistant powered by NLP, a SQLite knowledge base and a feedback-driven learning loop.</p>
+
+            <div class="sidebar-topics">
+                <p class="topics-label">I can help with</p>
+                <div class="topic-tag">Courses &amp; Programs</div>
+                <div class="topic-tag">Admissions &amp; Fees</div>
+                <div class="topic-tag">Scholarships</div>
+                <div class="topic-tag">Exam Schedules</div>
+                <div class="topic-tag">Library &amp; Facilities</div>
+                <div class="topic-tag">Faculty Info</div>
+                <div class="topic-tag">Accommodation</div>
+                <div class="topic-tag">Events &amp; Clubs</div>
+            </div>
+
+            <div class="sidebar-actions">
+                <a class="sidebar-link" href="/admin" target="_blank">Admin dashboard</a>
+            </div>
+
+            <div class="sidebar-footer">
+                <div class="tech-badge">NLP</div>
+                <div class="tech-badge">scikit-learn</div>
+                <div class="tech-badge">SQLite</div>
+                <div class="tech-badge">TF-IDF + SVM</div>
+            </div>
+        </div>
+
+        <!-- Chat Area -->
+        <div class="chat-container">
+            <div class="chat-header">
+                <div class="header-left">
+                    <div class="header-avatar">
+                        <span>E</span>
+                        <div class="status-dot"></div>
+                    </div>
+                    <div class="header-text">
+                        <h1>EduBot</h1>
+                        <p>Online - Ready to help</p>
+                    </div>
+                </div>
+                <div class="header-actions">
+                    <button class="header-btn" onclick="clearChat()" title="Clear chat" aria-label="Clear chat">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>
+                    </button>
+                </div>
+            </div>
+
+            <div class="chat-messages" id="chatMessages">
+                <div class="welcome-card">
+                    <div class="welcome-emoji">&#127891;</div>
+                    <h2>Welcome to EduBot v3</h2>
+                    <p>Ask me anything about courses, admissions, fees, exams, or campus life. If I get it wrong, click the thumbs-down and teach me.</p>
+                </div>
+
+                <div class="quick-actions" id="quickActions">
+                    <button class="quick-btn" onclick="sendQuickMessage('What courses do you offer?')"><span class="quick-icon">&#128218;</span> Courses</button>
+                    <button class="quick-btn" onclick="sendQuickMessage('How do I apply for admission?')"><span class="quick-icon">&#128221;</span> Admission</button>
+                    <button class="quick-btn" onclick="sendQuickMessage('What are the fees?')"><span class="quick-icon">&#128176;</span> Fees</button>
+                    <button class="quick-btn" onclick="sendQuickMessage('Tell me about scholarships')"><span class="quick-icon">&#127891;</span> Scholarships</button>
+                    <button class="quick-btn" onclick="sendQuickMessage('When are the exams?')"><span class="quick-icon">&#128203;</span> Exams</button>
+                    <button class="quick-btn" onclick="sendQuickMessage('Library hours')"><span class="quick-icon">&#128214;</span> Library</button>
+                    <button class="quick-btn" onclick="sendQuickMessage('Is hostel available?')"><span class="quick-icon">&#127968;</span> Hostel</button>
+                    <button class="quick-btn" onclick="sendQuickMessage('How to contact admin?')"><span class="quick-icon">&#128222;</span> Contact</button>
+                </div>
+            </div>
+
+            <div class="chat-input-area">
+                <div class="input-wrapper">
+                    <input type="text" id="userInput"
+                           placeholder="Ask me anything about the university..."
+                           autocomplete="off" autofocus
+                           maxlength="500"
+                           aria-label="Your message"
+                           required>
+                    <button id="sendBtn" onclick="sendMessage()" aria-label="Send" disabled>
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                            <line x1="22" y1="2" x2="11" y2="13"></line>
+                            <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+                        </svg>
+                    </button>
+                </div>
+                <p class="input-hint">Press Enter to send &middot; 1&ndash;500 characters &middot; Powered by NLP + SQLite</p>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/script.js"></script>
+</body>
+</html>

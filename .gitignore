@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+.pytest_cache/
+
+# Virtual environments
+venv/
+env/
+.venv/
+.env
+
+# Build artefacts
+build/
+dist/
+*.spec.bak
+
+# IDE / OS noise
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# DO commit these so first deploy is instant:
+#   data/edubot.db        (seeded knowledge base)
+#   models/*.pkl          (trained classifier + vectoriser)
+#   models/model_info.txt
+# - Render free tier has ephemeral disk; without these, every cold
+#   start has to retrain. Keeping them in git makes the bot snappy
+#   from the first request after a deploy.

@@ -1,0 +1,29 @@
+# Render.com Blueprint - one-click deploy config.
+#
+# If you connect a GitHub repo with this file at the root, Render
+# will detect it and offer to provision the service automatically.
+# You can also configure the same options manually in the dashboard.
+#
+# Docs: https://render.com/docs/blueprint-spec
+
+services:
+  - type: web
+    name: edubot
+    runtime: python
+    plan: free
+    region: oregon
+    branch: main
+    buildCommand: |
+      pip install --upgrade pip
+      pip install -r requirements.txt
+      python app/seed_db.py
+      python app/train.py
+    startCommand: gunicorn app:app --workers=1 --bind 0.0.0.0:$PORT --timeout 120
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: EDUBOT_ADMIN_PASSWORD
+        sync: false        # set this in the Render dashboard, NOT in git
+      - key: FLASK_DEBUG
+        value: "0"
+    healthCheckPath: /health

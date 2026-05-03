@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>EduBot v3 - Admin</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+</head>
+<body class="admin-body">
+    <div class="admin-container">
+        <header class="admin-header">
+            <div>
+                <h1>EduBot v3 - Admin</h1>
+                <p>Knowledge base, ML loop and feedback inspection.</p>
+            </div>
+            <a class="btn-secondary" href="/">Back to chat</a>
+        </header>
+
+        <!-- Database stats -->
+        <section class="admin-section">
+            <h2>Database stats</h2>
+            <div class="stat-grid">
+                {% for key, value in stats.items() %}
+                <div class="stat-card">
+                    <span class="stat-value">{{ value }}</span>
+                    <span class="stat-label">{{ key.replace('_', ' ') }}</span>
+                </div>
+                {% endfor %}
+            </div>
+        </section>
+
+        <!-- Pending suggestions (Tier 1 -> Tier 2 review queue) -->
+        <section class="admin-section">
+            <h2>
+                Pending suggestions
+                <span class="section-badge" id="pendingCount">{{ pending_rows|length }}</span>
+            </h2>
+            <p>End users flagged these answers as wrong and suggested an intent. Approve to enter the next training run, discard to drop them.</p>
+            {% if pending_rows %}
+            <table class="admin-table" id="pendingTable">
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>Phrase</th>
+                        <th>Suggested intent</th>
+                        <th>Source</th>
+                        <th>When</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                {% for row in pending_rows %}
+                    <tr id="pending-{{ row.id }}">
+                        <td>{{ row.id }}</td>
+                        <td>{{ row.pattern }}</td>
+                        <td><code>{{ row.intent }}</code></td>
+                        <td>{{ row.source }}</td>
+                        <td>{{ row.created_at }}</td>
+                        <td>
+                            <button class="btn-mini btn-approve" onclick="approvePattern({{ row.id }})">Approve</button>
+                            <button class="btn-mini btn-discard" onclick="discardPattern({{ row.id }})">Discard</button>
+                        </td>
+                    </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+            {% else %}
+            <p class="empty-msg">Nothing pending review.</p>
+            {% endif %}
+        </section>
+
+        <!-- Direct teach form (Tier 2 - admins are trusted) -->
+        <section class="admin-section">
+            <h2>Teach the bot directly</h2>
+            <p>Admin-curated patterns are added <strong>pre-approved</strong> and may trigger an auto-retrain.</p>
+            <div class="teach-form">
+                <div class="teach-form-row">
+                    <label class="modal-label" for="adminTeachPattern">Phrase</label>
+                    <input type="text" id="adminTeachPattern"
+                           placeholder="e.g. show me the price of MBA"
+                           maxlength="200" minlength="2" autocomplete="off">
+                    <span class="modal-counter" id="adminTeachCounter">0 / 200</span>
+                </div>
+                <div class="teach-form-row">
+                    <label class="modal-label" for="adminTeachIntent">Intent</label>
+                    <select id="adminTeachIntent">
+                        {% for tag in intents %}
+                            {% if tag != 'fallback' %}
+                            <option value="{{ tag }}">{{ tag }}</option>
+                            {% endif %}
+                        {% endfor %}
+                    </select>
+                </div>
+                <button class="btn-primary" onclick="adminTeach()">Save pattern</button>
+                <p class="modal-status" id="adminTeachStatus"></p>
+            </div>
+        </section>
+
+        <!-- Force retrain -->
+        <section class="admin-section">
+            <h2>Force a retrain</h2>
+            <p>Retrains the classifier using <code>intents.json</code> + every approved row in <code>learned_patterns</code>.</p>
+            <button class="btn-primary" onclick="forceRetrain()">Retrain model now</button>
+            <p class="modal-status" id="retrainStatus"></p>
+        </section>
+
+        <!-- Approved learned patterns -->
+        <section class="admin-section">
+            <h2>Approved learned patterns</h2>
+            {% if learned_rows %}
+            <table class="admin-table">
+                <thead><tr><th>ID</th><th>Pattern</th><th>Intent</th><th>Source</th><th>Used in model</th><th>Created</th></tr></thead>
+                <tbody>
+                {% for row in learned_rows %}
+                    <tr>
+                        <td>{{ row.id }}</td>
+                        <td>{{ row.pattern }}</td>
+                        <td><code>{{ row.intent }}</code></td>
+                        <td>{{ row.source }}</td>
+                        <td>{{ 'yes' if row.used_in_model else 'pending retrain' }}</td>
+                        <td>{{ row.created_at }}</td>
+                    </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+            {% else %}
+            <p class="empty-msg">No approved patterns yet. Use the teach form above or approve a pending suggestion.</p>
+            {% endif %}
+        </section>
+
+        <!-- Feedback log -->
+        <section class="admin-section">
+            <h2>Recent feedback</h2>
+            {% if feedback_rows %}
+            <table class="admin-table">
+                <thead><tr><th>ID</th><th>User message</th><th>Predicted</th><th>Confidence</th><th>Helpful?</th><th>Expected</th><th>When</th></tr></thead>
+                <tbody>
+                {% for row in feedback_rows %}
+                    <tr class="{{ 'row-bad' if row.helpful == 0 else 'row-good' }}">
+                        <td>{{ row.id }}</td>
+                        <td>{{ row.user_message }}</td>
+                        <td><code>{{ row.predicted_intent }}</code></td>
+                        <td>{{ '%.2f' % row.confidence if row.confidence is not none else '' }}</td>
+                        <td>{{ 'Yes' if row.helpful else 'No' }}</td>
+                        <td>{% if row.expected_intent %}<code>{{ row.expected_intent }}</code>{% endif %}</td>
+                        <td>{{ row.created_at }}</td>
+                    </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+            {% else %}
+            <p class="empty-msg">No feedback rows yet.</p>
+            {% endif %}
+        </section>
+    </div>
+
+    <script>
+        const MAX_PATTERN_LEN = 200;
+
+        // ---------- Approve / discard pending suggestions ----------
+        async function approvePattern(id) {
+            const row = document.getElementById('pending-' + id);
+            row.style.opacity = 0.5;
+            try {
+                const r = await fetch('/admin/approve/' + id, { method: 'POST' });
+                const data = await r.json();
+                if (data.approved) {
+                    row.remove();
+                    decrementPendingCount();
+                    if (data.retrained) flashStatus('retrainStatus', 'Approved + auto-retrained.');
+                } else {
+                    row.style.opacity = 1;
+                    alert('Approve failed: ' + (data.reason || r.status));
+                }
+            } catch (e) {
+                row.style.opacity = 1;
+                alert('Approve failed: ' + e);
+            }
+        }
+
+        async function discardPattern(id) {
+            const row = document.getElementById('pending-' + id);
+            row.style.opacity = 0.5;
+            try {
+                const r = await fetch('/admin/discard/' + id, { method: 'POST' });
+                if (r.ok) {
+                    row.remove();
+                    decrementPendingCount();
+                } else {
+                    row.style.opacity = 1;
+                    alert('Discard failed: HTTP ' + r.status);
+                }
+            } catch (e) {
+                row.style.opacity = 1;
+                alert('Discard failed: ' + e);
+            }
+        }
+
+        function decrementPendingCount() {
+            const badge = document.getElementById('pendingCount');
+            const next = Math.max(0, parseInt(badge.textContent, 10) - 1);
+            badge.textContent = next;
+            const tbody = document.querySelector('#pendingTable tbody');
+            if (tbody && tbody.children.length === 0) {
+                document.getElementById('pendingTable').remove();
+                const empty = document.createElement('p');
+                empty.className = 'empty-msg';
+                empty.textContent = 'Nothing pending review.';
+                document.querySelector('.admin-section h2 + p').after(empty);
+            }
+        }
+
+        // ---------- Direct teach form ----------
+        function refreshAdminTeachCounter() {
+            const input = document.getElementById('adminTeachPattern');
+            const counter = document.getElementById('adminTeachCounter');
+            const len = input.value.length;
+            counter.textContent = len + ' / ' + MAX_PATTERN_LEN;
+            counter.classList.toggle('counter-warn', len > MAX_PATTERN_LEN * 0.85);
+            counter.classList.toggle('counter-error', len > MAX_PATTERN_LEN);
+        }
+
+        document.addEventListener('DOMContentLoaded', () => {
+            const input = document.getElementById('adminTeachPattern');
+            if (input) input.addEventListener('input', refreshAdminTeachCounter);
+        });
+
+        async function adminTeach() {
+            const status = document.getElementById('adminTeachStatus');
+            const pattern = document.getElementById('adminTeachPattern').value.trim();
+            const intent = document.getElementById('adminTeachIntent').value;
+            if (pattern.length < 2) {
+                status.textContent = 'Phrase must be at least 2 characters.';
+                return;
+            }
+            if (pattern.length > MAX_PATTERN_LEN) {
+                status.textContent = 'Phrase is too long.';
+                return;
+            }
+            status.textContent = 'Saving...';
+            try {
+                const r = await fetch('/teach', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ pattern, intent }),
+                });
+                const data = await r.json();
+                if (data.error) {
+                    status.textContent = 'Error: ' + data.error;
+                    return;
+                }
+                const note = data.retrained
+                    ? ' Model auto-retrained.'
+                    : ' ' + data.learned_patterns_pending + ' pending until next retrain.';
+                status.textContent = 'Saved.' + note;
+                document.getElementById('adminTeachPattern').value = '';
+                refreshAdminTeachCounter();
+            } catch (e) {
+                status.textContent = 'Save failed: ' + e;
+            }
+        }
+
+        // ---------- Force retrain ----------
+        async function forceRetrain() {
+            const status = document.getElementById('retrainStatus');
+            status.textContent = 'Retraining (may take a few seconds)...';
+            try {
+                const r = await fetch('/retrain', { method: 'POST' });
+                const data = await r.json();
+                status.textContent = 'Done. New model: ' + data.model + '. Reload to refresh stats.';
+            } catch (e) {
+                status.textContent = 'Retrain failed: ' + e;
+            }
+        }
+
+        function flashStatus(id, text) {
+            const el = document.getElementById(id);
+            if (!el) return;
+            el.textContent = text;
+            setTimeout(() => { el.textContent = ''; }, 4000);
+        }
+    </script>
+</body>
+</html>
