@@ -20,13 +20,20 @@ MAX_MESSAGE_LEN = 500
 MAX_PATTERN_LEN = 200
 MIN_TEXT_LEN = 1
 
-# Strip ASCII control codes (NUL, BEL, etc.) but keep newlines and tabs
-# because some bot responses include them. Strip zero-width / direction
-# override characters used in homograph attacks too.
+# Strip ASCII control codes (NUL, BEL, VT, FF, etc.) but keep newlines
+# and tabs because some bot responses include them. Also strip the
+# zero-width / direction-override / line-separator / BOM Unicode chars
+# used in homograph attacks. We use \uXXXX escapes (not literal Unicode
+# characters) to keep this regex robust against editor / encoding
+# accidents - U+2028 and U+2029 in particular can break source files
+# if dropped in literally.
 _BAD_CHARS = re.compile(
-    r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f'   # ASCII control
-    r'​-‏'                      # zero-width / direction
-    r'  ﻿]'                # line/para separators, BOM
+    '['
+    '\x00-\x08\x0b\x0c\x0e-\x1f\x7f'   # ASCII control codes
+    '​-‏'                    # zero-width / direction
+    '  '                     # line / paragraph separators
+    '﻿'                           # byte-order mark
+    ']'
 )
 
 

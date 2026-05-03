@@ -1,9 +1,10 @@
 // EduBot v3 frontend (chat UI only).
 //
 // Trust-tier note: end users can ONLY (a) chat and (b) flag answers
-// 👍/👎. The thumbs-down picker submits a SUGGESTION via /feedback;
-// the suggestion stays in 'pending review' until an admin approves
-// it on /admin. There is no direct "teach" path from this UI.
+// thumbs-up / thumbs-down. The thumbs-down picker submits a SUGGESTION
+// via /feedback; the suggestion stays in 'pending review' until an admin
+// approves it on /admin. There is no direct "teach" path from this UI.
+//
 // Capabilities here:
 //   - sending messages with input validation
 //   - XSS-safe rendering of user messages
@@ -26,13 +27,23 @@ let lastBotTurn = null;
 
 // ---------- Input validation helpers ----------
 
+// Bad characters: ASCII control codes (NUL, BEL, VT, FF, etc.) plus
+// invisible / direction-override / line-separator Unicode chars and the
+// byte-order mark. We use \u escape sequences (NOT literal Unicode) on
+// purpose: U+2028 / U+2029 are valid line terminators in JavaScript and
+// having them appear LITERALLY inside a regex literal can break parsing.
+const BAD_CHARS_RE = new RegExp(
+    '[\\x00-\\x08\\x0b\\x0c\\x0e-\\x1f\\x7f' +
+    '\\u200B-\\u200F' +    // zero-width / direction override
+    '\\u2028\\u2029' +     // line / paragraph separators
+    '\\uFEFF' +            // byte-order mark
+    ']',
+    'g'
+);
+
 function trimAndCheck(raw, minLen, maxLen) {
     if (typeof raw !== 'string') return { ok: false, reason: 'invalid input' };
-    // Strip control + zero-width chars on the client too so the API gets
-    // the same value the user actually saw in the box.
-    const cleaned = raw
-        .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f​-‏  ﻿]/g, '')
-        .trim();
+    const cleaned = raw.replace(BAD_CHARS_RE, '').trim();
     if (cleaned.length < minLen) return { ok: false, reason: 'too short' };
     if (cleaned.length > maxLen) {
         return { ok: false, reason: `too long (max ${maxLen} chars)` };
@@ -122,6 +133,7 @@ function clearChat() {
         </div>
     `;
     lastBotTurn = null;
+    refreshSendButton();
 }
 
 // ---------- Message rendering ----------
@@ -232,14 +244,14 @@ function buildFeedbackRow() {
 
     const up = document.createElement('button');
     up.className = 'feedback-btn';
-    up.textContent = '👍';
+    up.textContent = '👍';   // thumbs up
     up.title = 'Yes, this was helpful';
     up.onclick = () => sendFeedback(true, row);
     row.appendChild(up);
 
     const down = document.createElement('button');
     down.className = 'feedback-btn';
-    down.textContent = '👎';
+    down.textContent = '👎'; // thumbs down
     down.title = 'No, this was not helpful';
     down.onclick = () => sendFeedback(false, row);
     row.appendChild(down);
@@ -291,7 +303,7 @@ async function sendFeedback(helpful, row) {
 }
 
 function replaceFeedbackRow(row, message) {
-    row.innerHTML = `<span class="feedback-thanks">${message}</span>`;
+    row.innerHTML = `<span class="feedback-thanks">${escapeHtml(message)}</span>`;
 }
 
 async function postFeedback(payload) {
@@ -307,7 +319,7 @@ async function postFeedback(payload) {
     }
 }
 
-// ---------- Intent list (used by the inline 👎 correction picker) ----------
+// ---------- Intent list (used by the inline thumbs-down picker) ----------
 
 async function getIntents() {
     if (intentCache) return intentCache;
@@ -322,9 +334,12 @@ async function getIntents() {
     return intentCache;
 }
 
-document.addEventListener('DOMContentLoaded', () => {
-    refreshSendButton();
-});
+// ---------- Boot ----------
+
+// Run once on initial page load. Without this the send button would
+// stay in its HTML default (disabled) until the user types something.
+refreshSendButton();
+document.addEventListener('DOMContentLoaded', refreshSendButton);
 
 // ---------- Typing indicator ----------
 
