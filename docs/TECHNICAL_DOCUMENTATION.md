@@ -22,6 +22,12 @@
 11. [Conclusion](#11-conclusion)
 12. [References](#12-references)
 
+> **v3.1 update (2026-05-06):** added per-session multi-turn dialogue
+> with anaphora resolution, a mood-changing avatar (emotional
+> intelligence trait), Web Speech API voice input + read-aloud, an
+> input-quality validation gate, and clickable sidebar topic tags.
+> Sections 1, 5, 6, 7, 8, 9 and 10 reflect those additions.
+
 ---
 
 ## 1. Product description
@@ -47,11 +53,26 @@ when it gets something wrong.
 - Sub-second response time on a laptop CPU (no GPU required).
 - Live data answers - the response for *"what are the fees?"* is built
   by querying SQLite, not by reading a hard-coded JSON file.
+- **Multi-turn dialogue** - per-browser session memory resolves
+  pronouns ("it", "this course", "the programme") to the previously
+  discussed entity, supporting a real consulting flow ("courses you
+  have" -> "tell me about MBA" -> "price of it").
+- **Emotional-feedback avatar** - the bot's avatar swaps face and
+  colour (happy / neutral / confused / thinking) depending on its
+  confidence in the last answer, addressing the brief's optional
+  "smiling face / surprise / annoyance" emotional-intelligence cue.
+- **Voice I/O** - microphone button uses the Web Speech API to
+  transcribe spoken questions; speaker toggle reads bot replies aloud
+  via `speechSynthesis`.
 - User-driven learning - thumbs-down feedback collects new training
-  patterns and a retrain rebuilds the model with them merged in.
+  patterns; admins approve or discard them; approved patterns trigger
+  an auto-retrain.
 - Confidence-aware fallback - low-confidence predictions (< 0.4) are
   routed to a polite "I didn't understand" response instead of
   guessing.
+- **Input quality gate** - server- and client-side rules reject
+  keyboard mashing and phone-number-style digit runs while letting
+  emails, prices and years through.
 - Single-binary distribution via PyInstaller.
 
 ### How a user interacts with it
@@ -229,7 +250,7 @@ intelligent-agent specification.)
 ## 5. AI traits found in the product
 
 The brief lists six possible AI traits and asks the team to demonstrate
-several. EduBot v3 deliberately exhibits **three**:
+several. EduBot v3 deliberately exhibits **five**:
 
 ### Trait 1 - Natural Language Processing (primary)
 
@@ -279,36 +300,98 @@ The bot learns in two ways:
    learning - chatbot updating its own knowledge base"* while
    protecting the model from data-poisoning by untrusted users.
 
+### Trait 4 - Multi-turn dialogue management (extended NLP)
+
+A consulting conversation does not work if every message is treated
+in isolation. EduBot v3 adds a dialogue-management layer
+(`app/context.py`) that holds a small per-session memory and:
+
+- **Resolves anaphora** - phrases such as `it`, `this course`,
+  `that one`, `the programme` are substituted with the entity
+  remembered from the previous turn (e.g. *"BSc Computer Science"*)
+  *before* the message is fed to the classifier.
+- **Tracks the active entity** - course names, codes (`CS-BSC`,
+  `MBA`) and aliases (`cs`, `mba`, `data science`) are recognised in
+  the user's message and become the new active entity.
+- **Asks for clarification** - if the user uses a pronoun before any
+  course is in context, the bot replies *"Which programme would you
+  like to know about?"* rather than guessing.
+- **Builds per-entity answers** - per-course detail and per-course
+  fee responses are generated when the user has narrowed down to one
+  programme.
+
+This satisfies the brief's *"natural language communication among
+agents"* trait at a level beyond simple Q&A and is the primary
+contributor to the 22-mark *"effective implementation of NLP"* line.
+
+### Trait 5 - Emotional intelligence
+
+The bot signals an emotional state through its avatar so the user can
+read at a glance whether the last reply was confident, uncertain, or
+a fallback:
+
+| State    | Trigger                                                    | Avatar |
+|----------|------------------------------------------------------------|--------|
+| Happy    | confidence >= 0.7 OR the answer came from the database     | 🙂     |
+| Neutral  | confidence between 0.4 and 0.7                             | 😐     |
+| Confused | fallback / error / very low confidence                     | 😕     |
+| Thinking | request in flight                                          | 🤔     |
+
+Mood is computed by `moodFor(confidence, source, tag)` in
+`static/script.js` and applied with a CSS transition so the swap is
+visible. Each historical bot bubble keeps the mood it was rendered
+with, giving an at-a-glance emotional history of the conversation.
+This addresses the brief's *"smiling face, surprise, annoyance to
+make it more realistic and emotionally intelligent"* hint.
+
+(The brief lists emotional intelligence under the Intelligent-Agent
+option, but the chatbot mark scheme rewards the same effort under
+*"overall functionality, quality and appearance"* and *creativity*.)
+
 ---
 
 ## 6. Algorithms (flowcharts and pseudocode)
 
-### Algorithm A - Intent classification + response generation
+### Algorithm A - Intent classification + response generation (with multi-turn)
 
 ```
-ALGORITHM get_response(user_input):
+ALGORITHM get_response(user_input, session):
     if user_input is empty:
         return "Please type a question..."
 
-    cleaned   <- clean_text(user_input)
+    # ---- Dialogue management (multi-turn) ----
+    had_pronoun     <- has_pronoun(user_input)         # "it", "this course"...
+    resolved_input  <- resolve_pronouns(user_input, session)
+
+    if had_pronoun and session.last_entity is None:
+        return "Which programme would you like to know about?"
+
+    cleaned   <- clean_text(resolved_input)
     vector    <- tfidf_vectorizer.transform(cleaned)
     tag, conf <- model.predict(vector), max(model.predict_proba(vector))
 
     if conf < CONFIDENCE_THRESHOLD (0.4):
         tag <- "fallback"
 
-    if tag in DYNAMIC_INTENTS:
-        response <- build_database_response(tag)
-        source   <- "database"
-        if response is None:
-            response <- random_static_template(tag)
-            source   <- "static"
-    else:
-        response <- random_static_template(tag)
-        source   <- "static"
+    # ---- Entity extraction (course mentioned this turn) ----
+    entity <- extract_course_entity(resolved_input)
+    if entity is None and had_pronoun and session.last_entity:
+        entity <- session.last_entity
 
+    # If the user clearly named a course, refuse to fall back -
+    # treat as a courses inquiry.
+    if entity and tag = "fallback":
+        tag <- "courses"
+
+    # ---- Response composition (entity-aware) ----
+    if entity and tag = "fees":      response <- _respond_fees_for_course(entity)
+    if entity and tag = "courses":   response <- _respond_course_detail(entity)
+    else if tag in DYNAMIC_INTENTS:  response <- build_database_response(tag)
+    else:                            response <- random_static_template(tag)
+
+    update_session(session, user_input, response, tag, entity)
     log_chat_history(user_input, response, tag, conf, source)
-    return { tag, response, conf, source }
+    return { tag, response, conf, source, entity }
 ```
 
 ### Algorithm B - Text preprocessing
@@ -402,12 +485,94 @@ ALGORITHM record_feedback(message, response, predicted, conf,
     return retrained = False
 ```
 
+### Algorithm E - Anaphora resolution (multi-turn dialogue manager)
+
+```
+ALGORITHM resolve_pronouns(text, session):
+    if session has no last_entity:
+        return text unchanged
+
+    entity <- session.last_entity
+    for each pattern in [
+        "this course",  "that course",  "the course",
+        "this program", "that program", "the program",
+        "this one",     "that one",     "it"
+    ]:
+        text <- regex_replace_word_boundary(text, pattern, entity)
+
+    return text
+
+
+ALGORITHM extract_course_entity(text):
+    rows <- db.list_courses()
+
+    # 1. Verbatim canonical name match
+    for r in rows:
+        if r.name.lower() in text.lower():
+            return r.name
+
+    # 2. Course code match (e.g. "CS-BSC", "MBA")
+    for r in rows:
+        if word_boundary_match(r.code, text):
+            return r.name
+
+    # 3. Alias match (e.g. "cs", "mba", "data science")
+    for alias, needle in COURSE_ALIASES:
+        if word_boundary_match(alias, text):
+            for r in rows:
+                if needle in r.name.lower():
+                    return r.name
+
+    return None
+```
+
+### Algorithm F - Input quality validation
+
+```
+ALGORITHM check_message_quality(text):
+    # 1. Reject single unbroken letter run > 30 chars (gibberish).
+    if regex_match(text, /[A-Za-z]{31,}/):
+        raise ValidationError("looks like gibberish")
+
+    # 2. Reject digit run > 9 chars (phone / account numbers).
+    if regex_match(text, /\d{10,}/):
+        raise ValidationError("phone number not allowed")
+
+    # 3. For texts >= 4 chars, require >= 30% letters.
+    if len(text) >= 4:
+        letter_ratio <- count_letters(text) / len(text)
+        if letter_ratio < 0.30:
+            raise ValidationError("too few letters - ask in words")
+```
+
+The same three rules run client-side in `static/script.js` so the
+send button stays disabled and the user gets immediate feedback; the
+server-side copy is the authoritative gate.
+
 ### Flowchart (text form)
 
 ```
                 +---------------+
                 | User message  |
                 +-------+-------+
+                        |
+                        v
+                +-----------------------+
+                | quality validation    |
+                |  (alpha run, digit    |
+                |   run, letter ratio)  |
+                +-------+---------------+
+                        | ok
+                        v
+                +-----------------------+
+                | resolve_pronouns      |
+                |  (using session)      |
+                +-------+---------------+
+                        |
+                        v
+                +-----------------------+
+                | extract_course_entity |
+                +-------+---------------+
                         |
                         v
                 +---------------+
@@ -547,8 +712,26 @@ def _respond_courses():
         for r in pg:
             lines.append(f"  - {r['name']} ({r['code']}) - "
                          f"{r['faculty']} - ${r['fee_per_year']}/year")
-    lines.append("\nWould you like details about any specific programme?")
     return "\n".join(lines)
+```
+
+For a follow-up turn that has already narrowed to one programme, a
+dedicated builder runs instead - this is what makes *"price of it"*
+return only the relevant fee block:
+
+```python
+@staticmethod
+def _respond_fees_for_course(course_name):
+    r = next(r for r in db.list_courses() if r['name'] == course_name)
+    per_sem = r['fee_per_year'] // 2
+    total   = int(round(r['fee_per_year'] * float(r['duration_years'])))
+    return (
+        f"Tuition for {r['name']} ({r['code']}):\n"
+        f"  - ${r['fee_per_year']}/year\n"
+        f"  - ${per_sem}/semester (paid in two instalments)\n"
+        f"  - Total programme cost: ~${total} "
+        f"over {r['duration_years']} years"
+    )
 ```
 
 The DB layer itself is `app/database.py`. It uses parameterised
@@ -662,6 +845,156 @@ This satisfies the marking-scheme requirement *"an indication of
 machine learning - chatbot updating its own knowledge base"* while
 adding a defensible answer to the obvious viva question
 *"what stops a malicious user from corrupting your bot?"*
+
+### 7.6 Multi-turn dialogue (anaphora + entity tracking)
+
+`app/context.py` keeps a tiny per-session state dict and resolves
+pronouns before classification:
+
+```python
+# app/context.py - excerpt
+_PRONOUN_PATTERNS = [
+    re.compile(r'\bthis course\b',  re.IGNORECASE),
+    re.compile(r'\bthe course\b',   re.IGNORECASE),
+    re.compile(r'\bthis program(?:me)?\b', re.IGNORECASE),
+    re.compile(r'\bthis one\b',     re.IGNORECASE),
+    re.compile(r'\bit\b',           re.IGNORECASE),
+    # ...etc
+]
+
+def resolve_pronouns(text, session):
+    if not session or not session.get('last_entity'):
+        return text
+    entity = session['last_entity']
+    for pat in _PRONOUN_PATTERNS:
+        text = pat.sub(entity, text)
+    return text
+```
+
+`chat.py` then routes per-entity questions to dedicated builders:
+
+```python
+# app/chat.py - excerpt
+entity = self._extract_course_entity(resolved_input)
+if entity is None and session and session.get('last_entity') and had_pronoun:
+    entity = session['last_entity']
+
+# An obvious course mention (e.g. "tell me about MBA") beats a
+# fallback - if we recognised the entity, answer about that course.
+if entity and tag == 'fallback':
+    tag = 'courses'
+
+if entity and tag == 'fees':
+    response = self._respond_fees_for_course(entity)
+elif entity and tag == 'courses':
+    response = self._respond_course_detail(entity)
+```
+
+This is what makes the consulting flow work end-to-end:
+
+```
+USER> What courses do you offer?
+BOT > [lists 9 programmes, no entity]
+USER> Tell me about MBA
+BOT > [MBA detail card; session.last_entity = "MBA ..."]
+USER> price of it
+BOT > [MBA-only fees, $5000/year]      # "it" was substituted with MBA
+USER> how do I apply for it
+BOT > [admission steps; entity carried forward]
+```
+
+Sessions live in memory only, expire after 1 hour idle, and are
+capped at 1000 active sessions.
+
+### 7.7 Mood avatar (emotional intelligence)
+
+The avatar's face and colour are computed on the client from the
+`{confidence, source, tag}` returned by `/chat`:
+
+```javascript
+// static/script.js - excerpt
+function moodFor(confidence, source, tag) {
+    if (tag === 'fallback' || source === 'fallback' || tag === 'error')
+        return { name: 'confused', face: '\u{1F615}', label: "Hmm, I'm not sure" };
+    if (tag === 'clarify')
+        return { name: 'thinking', face: '\u{1F914}', label: 'Need a bit more info' };
+    if (confidence >= 0.7 || source === 'database')
+        return { name: 'happy',   face: '\u{1F642}', label: 'Happy to help' };
+    if (confidence >= 0.4)
+        return { name: 'neutral', face: '\u{1F610}', label: 'Best guess answer' };
+    return     { name: 'confused', face: '\u{1F615}', label: 'Low confidence' };
+}
+```
+
+A CSS transition on the avatar's `background` makes the colour swap
+visible. Each rendered bot message keeps the mood it was created
+with, so the conversation history shows an emotional timeline.
+
+### 7.8 Voice input and read-aloud
+
+Voice features use only browser APIs - no extra Python dependencies:
+
+```javascript
+// static/script.js - excerpt
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+if (SR && micBtn) {
+    recognition = new SR();
+    recognition.lang = 'en-US';
+    recognition.onresult = (event) => {
+        userInput.value = event.results[0][0].transcript;
+        refreshSendButton();
+        setTimeout(() => { if (!sendBtn.disabled) sendMessage(); }, 250);
+    };
+}
+
+function speak(text) {
+    if (!ttsEnabled || !window.speechSynthesis) return;
+    const utt = new SpeechSynthesisUtterance(
+        text.replace(/^\s*-\s+/gm, '').replace(/\n+/g, '. ').slice(0, 600)
+    );
+    utt.lang = 'en-US';
+    window.speechSynthesis.cancel();
+    window.speechSynthesis.speak(utt);
+}
+```
+
+Browsers without the API see a disabled mic button; the read-aloud
+toggle is ignored. The user's TTS preference is persisted in
+`localStorage`.
+
+### 7.9 Input quality validation
+
+Server side (`app/validate.py`):
+
+```python
+MAX_ALPHA_RUN = 30        # gibberish threshold
+MAX_DIGIT_RUN = 9         # phone-number threshold
+MIN_LETTER_RATIO = 0.30   # mostly-symbols threshold
+
+def check_message_quality(text, field='message'):
+    if _ALPHA_RUN_RE.search(text):
+        raise ValidationError(field, "that looks like gibberish - "
+                                     "please ask a real question")
+    if _DIGIT_RUN_RE.search(text):
+        raise ValidationError(field, "long number sequences "
+                                     "aren't valid questions")
+    if len(text) >= 4 and len(_LETTER_RE.findall(text)) / len(text) < MIN_LETTER_RATIO:
+        raise ValidationError(field, "please ask a question in words")
+```
+
+Wired into `/chat` via `clean_text_field(check_quality=True)`. The
+client (`static/script.js`) runs the identical regexes before
+enabling the send button so the user sees the rejection
+immediately. Verified test inputs:
+
+| Input                                    | Result         |
+|------------------------------------------|----------------|
+| `idneibviebvibefvibevebvievowivbwvbwib...` | rejected (alpha run) |
+| `4384384934573795735384734090395`        | rejected (digit run) |
+| `########`                               | rejected (letter ratio) |
+| `Email me at info@university.edu`        | accepted       |
+| `BSc Computer Science for 2024-2025?`    | accepted       |
+| `Is hostel $3000 per year?`              | accepted       |
 
 ---
 
@@ -840,6 +1173,8 @@ edubot-v3/
 │   ├── seed_db.py                      initial knowledge-base data
 │   ├── train.py                        3-model training pipeline
 │   ├── chat.py                         inference engine + DB-backed responses
+│   ├── context.py                      multi-turn dialogue (sessions, anaphora)
+│   ├── validate.py                     input validation + quality gate
 │   └── learning.py                     feedback-driven retraining loop
 ├── data/
 │   ├── intents.json                    static patterns + small-talk responses
@@ -849,11 +1184,11 @@ edubot-v3/
 │   ├── vectorizer.pkl                  pickled TF-IDF vectoriser
 │   └── model_info.txt                  human-readable metadata
 ├── templates/
-│   ├── index.html                      chat UI
+│   ├── index.html                      chat UI (mood avatar, mic, TTS toggle)
 │   └── admin.html                      admin dashboard
 ├── static/
-│   ├── script.js                       chat UI + feedback (👍/👎)
-│   └── style.css                       all styling
+│   ├── script.js                       chat UI, sessions, mood, voice I/O
+│   └── style.css                       all styling (mood transitions)
 ├── tests/
 │   └── test_smoke.py                   pytest smoke tests
 └── docs/
@@ -888,6 +1223,15 @@ all files in `app/`, `tests/`, plus `app.py` and `build.spec`.
 | T12 | API        | `/feedback` (thumbs-down + expected) increments pending count | manual curl |
 | T13 | API        | `/teach` accepts (pattern, intent), rejects unknown intent | manual curl |
 | T14 | API        | `/retrain` returns the new winning model name | manual curl |
+| T15 | Multi-turn | Pronoun without prior entity returns the *clarify* response | manual + pytest |
+| T16 | Multi-turn | "Tell me about MBA" -> "price of it" routes to per-course fees with the same entity | manual end-to-end |
+| T17 | Multi-turn | `/session/reset` clears server-side memory; "price of it" then prompts to clarify | manual curl |
+| T18 | Validation | Long alpha run (`idneibviebvi...`) is rejected with a readable error | manual + pytest |
+| T19 | Validation | Long digit run (`4384384934573795735`) is rejected | manual + pytest |
+| T20 | Validation | `info@university.edu`, `$3000`, `2024-2025` are accepted | manual + pytest |
+| T21 | UI         | Sidebar topic tags fire the matching question | manual click-through |
+| T22 | UI         | Mood avatar swaps face/colour with the bot's confidence | manual visual check |
+| T23 | UI         | Voice mic transcribes a spoken phrase into the input field (Chrome / Edge) | manual visual check |
 
 ### 10.2 Test data (representative phrases per intent)
 
@@ -911,21 +1255,16 @@ all files in `app/`, `tests/`, plus `app.py` and `build.spec`.
 
 ### 10.3 Automated test results
 
-`python -m pytest tests/ -v` (run on 2026-05-03):
+`python -m pytest tests/ -q` (run on 2026-05-06, after the v3.1 update):
 
 ```
-tests/test_smoke.py::test_clean_text_strips_punctuation_and_lemmatises  PASSED
-tests/test_smoke.py::test_clean_text_keeps_question_words               PASSED
-tests/test_smoke.py::test_db_seeding_populates_required_tables          PASSED
-tests/test_smoke.py::test_db_helpers_return_dicts                       PASSED
-tests/test_smoke.py::test_predict_intent_routes_courses_to_courses_tag  PASSED
-tests/test_smoke.py::test_get_response_uses_database_for_courses        PASSED
-tests/test_smoke.py::test_get_response_uses_static_for_greeting         PASSED
-tests/test_smoke.py::test_low_confidence_falls_back                     PASSED
-tests/test_smoke.py::test_teach_adds_learned_pattern_and_can_retrain    PASSED
-
-============================== 9 passed in 4.29s ==============================
+.........................                                                [100%]
+25 passed in 4.76s
 ```
+
+The suite covers all three tiers, the ML feedback loop, the new
+multi-turn dialogue manager, and input validation including the
+quality gate.
 
 ### 10.4 Training output
 
@@ -1019,8 +1358,18 @@ What has been delivered:
   single Windows executable, satisfying the brief's
   *"runs from an executable file without extra installation of
   libraries"* requirement.
-- An automated test suite (9 pytest tests, all passing) covering all
-  three tiers and the ML loop.
+- An automated test suite (25 pytest tests, all passing) covering all
+  three tiers, the ML loop, the multi-turn dialogue manager, and
+  input validation.
+- A **multi-turn dialogue manager** (`app/context.py`) that resolves
+  pronouns and tracks the active entity, supporting a real
+  consulting flow with follow-up questions.
+- An **emotional-intelligence avatar** that swaps face / colour with
+  the bot's confidence, plus voice input and read-aloud via the
+  browser's native Web Speech APIs.
+- A two-layer **input quality validation** gate that rejects
+  gibberish and phone-number-style numeric spam without blocking
+  legitimate inputs like emails, prices or years.
 
 ### Known limitations and future work
 
@@ -1033,14 +1382,19 @@ What has been delivered:
 - The lemmatiser is rule-based; a true WordNet-backed lemmatiser
   would handle irregular forms more reliably at the cost of bundle
   size.
-- The admin dashboard has no authentication. For a multi-user
-  deployment, basic-auth or session login would be required.
+- Admin authentication is opt-in via the `EDUBOT_ADMIN_PASSWORD`
+  environment variable. With it unset the dashboard is open
+  (development convenience). A multi-user deployment should require
+  it always-on plus session login.
 - Confidence scores from `SVC` come from Platt scaling and can be
   miscalibrated; switching to a `CalibratedClassifierCV` wrapper
   would improve the 0.4 fallback threshold's reliability.
-- The chat is single-turn (no conversation memory). A slot-filling
-  layer would let the bot ask follow-up questions, e.g.
-  *"Which course do you mean - BSc CS or BSc IT?"*.
+- Multi-turn memory tracks the **last entity** only. Slot-filling
+  for multiple slots in flight (e.g. course + intake date in the
+  same conversation) is not yet implemented.
+- Sessions live in-process. A horizontally scaled deployment would
+  need them in Redis or the database to survive worker restarts and
+  load balancing.
 
 ### Lessons learned
 
