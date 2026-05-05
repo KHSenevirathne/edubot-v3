@@ -31,6 +31,7 @@ from chat import EduBot              # noqa: E402
 import learning                       # noqa: E402
 import database as db                 # noqa: E402
 import validate as v                  # noqa: E402
+import context as ctx                 # noqa: E402
 
 
 app = Flask(__name__, template_folder='templates', static_folder='static')
@@ -91,20 +92,48 @@ def home():
 
 @app.route('/chat', methods=['POST'])
 def chat():
-    """Classify a user message and return the bot's answer."""
+    """Classify a user message and return the bot's answer.
+
+    Optional `session_id` in the body wires the request into the
+    multi-turn dialogue manager so the bot can resolve pronouns
+    ("price of it") to the previously discussed entity.
+    """
     data = request.get_json(silent=True) or {}
     user_message = v.clean_text_field(
         data.get('message'), 'message',
         min_len=1, max_len=v.MAX_MESSAGE_LEN,
+        check_quality=True,     # gibberish / phone-number gate
     )
 
-    result = bot.get_response(user_message)
+    # Session ID is opaque - we only validate length and that it looks
+    # like a hex token, since the frontend mints it via crypto.randomUUID.
+    raw_sid = data.get('session_id')
+    session_id = None
+    if isinstance(raw_sid, str) and 0 < len(raw_sid) <= 64:
+        if all(c.isalnum() or c == '-' for c in raw_sid):
+            session_id = raw_sid
+    session = ctx.get_session(session_id) if session_id else None
+
+    result = bot.get_response(user_message, session=session)
     return jsonify({
         'response':   result['response'],
         'tag':        result['tag'],
         'confidence': result['confidence'],
         'source':     result['source'],
+        'entity':     result.get('entity'),
+        'session_id': session['id'] if session else None,
     })
+
+
+@app.route('/session/reset', methods=['POST'])
+def session_reset():
+    """Clear server-side memory for a session (paired with the
+    'Clear chat' button so a new conversation starts cleanly)."""
+    data = request.get_json(silent=True) or {}
+    raw_sid = data.get('session_id')
+    if isinstance(raw_sid, str) and raw_sid:
+        ctx.reset_session(raw_sid)
+    return jsonify({'reset': True})
 
 
 @app.route('/feedback', methods=['POST'])

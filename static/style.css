@@ -143,10 +143,26 @@ body {
     font-size: 12px;
     font-weight: 500;
     border: 1px solid rgba(255,255,255,0.06);
-    transition: background 0.2s;
+    transition: background 0.2s, transform 0.15s, border-color 0.2s;
     flex-shrink: 0;
+    /* button reset */
+    color: inherit;
+    font-family: inherit;
+    text-align: left;
+    cursor: pointer;
+    width: 100%;
+    display: block;
 }
-.topic-tag:hover { background: rgba(255,255,255,0.14); }
+.topic-tag:hover {
+    background: rgba(255,255,255,0.16);
+    border-color: rgba(255,255,255,0.22);
+    transform: translateX(2px);
+}
+.topic-tag:active { transform: translateX(2px) scale(0.98); }
+.topic-tag:focus-visible {
+    outline: 2px solid rgba(255,255,255,0.5);
+    outline-offset: 2px;
+}
 
 .sidebar-actions {
     display: flex; flex-direction: column; gap: 8px;
@@ -237,6 +253,29 @@ body {
     color: var(--text-muted); transition: all 0.15s;
 }
 .header-btn:hover { background: var(--border-light); color: var(--text-secondary); }
+.header-btn.is-active {
+    background: var(--primary-light);
+    border-color: var(--primary);
+    color: var(--primary);
+}
+.header-actions { display: flex; gap: 8px; align-items: center; }
+
+/* ---------- Mood avatar (emotional intelligence) ---------- */
+/* The avatar swaps face + colour based on the bot's confidence in
+   the last reply. high (>=0.7 or DB answer) -> happy; medium -> neutral;
+   low / fallback -> confused. Styled with a transition so the swap is
+   visible to the user. */
+.header-avatar { transition: background 0.35s ease, transform 0.25s ease; }
+.header-avatar.mood-happy    { background: var(--success); }
+.header-avatar.mood-neutral  { background: var(--warning); }
+.header-avatar.mood-confused { background: var(--danger); }
+.header-avatar.mood-thinking { background: var(--text-secondary); }
+.header-avatar.is-bouncing { transform: scale(1.08); }
+.mood-face { font-size: 22px; line-height: 1; }
+.bot-message .message-avatar .mood-face { font-size: 16px; }
+.bot-message .message-avatar.mood-happy    { background: var(--success); }
+.bot-message .message-avatar.mood-neutral  { background: var(--warning); }
+.bot-message .message-avatar.mood-confused { background: var(--danger); }
 
 /* ---------- Messages ---------- */
 
@@ -451,6 +490,25 @@ body {
     color: var(--text); padding: 10px 0; font-weight: 500;
 }
 #userInput::placeholder { color: var(--text-muted); font-weight: 400; }
+
+.mic-btn {
+    width: 36px; height: 36px;
+    background: transparent; color: var(--text-muted);
+    border: none; border-radius: 10px;
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    transition: all 0.15s; flex-shrink: 0;
+}
+.mic-btn:hover { background: var(--border-light); color: var(--primary); }
+.mic-btn.is-listening {
+    color: var(--danger); background: #fee2e2;
+    animation: micPulse 1.1s ease-in-out infinite;
+}
+.mic-btn.is-disabled { opacity: 0.4; cursor: not-allowed; }
+@keyframes micPulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.45); }
+    50%      { box-shadow: 0 0 0 6px rgba(239, 68, 68, 0); }
+}
 
 #sendBtn {
     width: 42px; height: 42px;

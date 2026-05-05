@@ -22,14 +22,14 @@
 
             <div class="sidebar-topics">
                 <p class="topics-label">I can help with</p>
-                <div class="topic-tag">Courses &amp; Programs</div>
-                <div class="topic-tag">Admissions &amp; Fees</div>
-                <div class="topic-tag">Scholarships</div>
-                <div class="topic-tag">Exam Schedules</div>
-                <div class="topic-tag">Library &amp; Facilities</div>
-                <div class="topic-tag">Faculty Info</div>
-                <div class="topic-tag">Accommodation</div>
-                <div class="topic-tag">Events &amp; Clubs</div>
+                <button type="button" class="topic-tag" onclick="sendQuickMessage('What courses do you offer?')">Courses &amp; Programs</button>
+                <button type="button" class="topic-tag" onclick="sendQuickMessage('How do I apply for admission and what are the fees?')">Admissions &amp; Fees</button>
+                <button type="button" class="topic-tag" onclick="sendQuickMessage('Tell me about scholarships')">Scholarships</button>
+                <button type="button" class="topic-tag" onclick="sendQuickMessage('When are the exams?')">Exam Schedules</button>
+                <button type="button" class="topic-tag" onclick="sendQuickMessage('Tell me about the library')">Library &amp; Facilities</button>
+                <button type="button" class="topic-tag" onclick="sendQuickMessage('Tell me about the faculty')">Faculty Info</button>
+                <button type="button" class="topic-tag" onclick="sendQuickMessage('Is hostel accommodation available?')">Accommodation</button>
+                <button type="button" class="topic-tag" onclick="sendQuickMessage('What events are coming up?')">Events &amp; Clubs</button>
             </div>
 
             <div class="sidebar-actions">
@@ -48,16 +48,19 @@
         <div class="chat-container">
             <div class="chat-header">
                 <div class="header-left">
-                    <div class="header-avatar">
-                        <span>E</span>
+                    <div class="header-avatar mood-happy" id="headerAvatar">
+                        <span class="mood-face" id="botAvatarFace">&#128578;</span>
                         <div class="status-dot"></div>
                     </div>
                     <div class="header-text">
                         <h1>EduBot</h1>
-                        <p>Online - Ready to help</p>
+                        <p id="botMoodLabel">Online - Ready to help</p>
                     </div>
                 </div>
                 <div class="header-actions">
+                    <button class="header-btn" id="ttsToggle" onclick="toggleTts()" title="Read replies aloud" aria-label="Toggle text to speech" aria-pressed="false">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 010 7.07"/></svg>
+                    </button>
                     <button class="header-btn" onclick="clearChat()" title="Clear chat" aria-label="Clear chat">
                         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>
                     </button>
@@ -85,6 +88,9 @@
 
             <div class="chat-input-area">
                 <div class="input-wrapper">
+                    <button id="micBtn" class="mic-btn" type="button" onclick="toggleVoiceInput()" title="Speak your question" aria-label="Voice input" aria-pressed="false">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+                    </button>
                     <input type="text" id="userInput"
                            placeholder="Ask me anything about the university..."
                            autocomplete="off" autofocus
@@ -98,7 +104,7 @@
                         </svg>
                     </button>
                 </div>
-                <p class="input-hint">Press Enter to send &middot; 1&ndash;500 characters &middot; Powered by NLP + SQLite</p>
+                <p class="input-hint">Press Enter to send &middot; tap the mic to speak &middot; 1&ndash;500 characters</p>
             </div>
         </div>
     </div>

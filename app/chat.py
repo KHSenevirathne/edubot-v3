@@ -14,6 +14,7 @@ whether a response is built from live DB data or from a stock template.
 import json
 import pickle
 import random
+import re
 import os
 import sys
 
@@ -21,6 +22,7 @@ import sys
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from preprocess import clean_text  # noqa: E402
 import database as db              # noqa: E402
+import context as ctx              # noqa: E402
 
 
 # Intents whose responses depend on data that can change over time.
@@ -28,6 +30,28 @@ import database as db              # noqa: E402
 DYNAMIC_INTENTS = {
     'courses', 'fees', 'admission', 'scholarship', 'exams',
     'timetable', 'library', 'contact', 'faculty', 'hostel', 'events'
+}
+
+
+# Course-name aliases the user might type. Mapped to a substring we
+# can match against rows in the `courses` table. Keeping this small and
+# explicit beats trying to be clever with fuzzy matching for a coursework
+# demo - the demo lives or dies on predictable answers.
+_COURSE_ALIASES = {
+    'cs':                 'computer science',
+    'comp sci':           'computer science',
+    'computer science':   'computer science',
+    'it':                 'information technology',
+    'information technology': 'information technology',
+    'software engineering':   'software engineering',
+    'software eng':           'software engineering',
+    'data science':           'data science',
+    'cyber security':         'cyber security',
+    'cybersecurity':          'cyber security',
+    'mba':                'mba',
+    'bba':                'bba',
+    'business':           'business administration',
+    'business administration': 'business administration',
 }
 
 
@@ -79,25 +103,84 @@ class EduBot:
             confidence = 1.0
         return tag, confidence
 
-    def get_response(self, user_input):
-        """Public entry point. Returns dict {response, tag, confidence, source}."""
+    def get_response(self, user_input, session=None):
+        """Public entry point.
+
+        Returns dict {response, tag, confidence, source, entity}.
+
+        When `session` is provided (a dict from context.get_session), the
+        bot will:
+          - resolve pronouns ("it", "this course") to the entity it
+            remembered from earlier turns,
+          - update that memory with any new entity it spots in the
+            current message,
+          - produce per-entity answers (e.g. fees for ONE course rather
+            than the full price list) when the user clearly means a
+            specific programme.
+        """
         if not user_input or not user_input.strip():
             return {
                 'tag': 'fallback',
                 'response': "Please type a question and I'll try to help!",
                 'confidence': 0.0,
                 'source': 'static',
+                'entity': None,
             }
 
-        tag, confidence = self.predict_intent(user_input)
+        # ---- Dialogue management: anaphora + entity tracking ----
+        had_pronoun = ctx.has_pronoun(user_input)
+        resolved_input = ctx.resolve_pronouns(user_input, session) if session else user_input
+
+        # If the user used a pronoun but we don't have anything to point
+        # it at, ask which programme they mean rather than guessing.
+        if (
+            session is not None
+            and had_pronoun
+            and not session.get('last_entity')
+        ):
+            response = (
+                "Which programme would you like to know about? "
+                "For example: 'BSc Computer Science', 'BSc Data Science', or 'MBA'."
+            )
+            db.log_chat(user_input, response, 'clarify', 1.0, 'static')
+            return {
+                'tag': 'clarify',
+                'response': response,
+                'confidence': 1.0,
+                'source': 'static',
+                'entity': None,
+            }
+
+        tag, confidence = self.predict_intent(resolved_input)
 
         # Low-confidence answers go straight to fallback.
         if confidence < self.confidence_threshold:
             tag = 'fallback'
 
-        response, source = self._build_response(tag)
+        # Try to identify a specific course mentioned in the (resolved)
+        # message. If the user is following up on the SAME entity, also
+        # carry the previous entity forward.
+        entity = self._extract_course_entity(resolved_input)
+        if entity is None and session and session.get('last_entity') and had_pronoun:
+            entity = session['last_entity']
 
-        # Log to chat_history (analytics + test plan evidence).
+        # If the user clearly named a course, refuse to silently fall
+        # back - the entity itself is enough signal that they want the
+        # programme detail.
+        if entity and tag == 'fallback':
+            tag = 'courses'
+
+        response, source = self._build_response(tag, entity=entity)
+
+        # Persist for future turns and analytics.
+        if session is not None:
+            ctx.update_session(
+                session,
+                user_message=user_input,
+                bot_response=response,
+                intent=tag,
+                entity=entity,
+            )
         db.log_chat(user_input, response, tag, confidence, source)
 
         return {
@@ -105,15 +188,31 @@ class EduBot:
             'response': response,
             'confidence': round(confidence, 3),
             'source': source,
+            'entity': entity,
         }
 
     # ---------------- Response composition ----------------
 
-    def _build_response(self, tag):
+    def _build_response(self, tag, entity=None):
         """Return (response_text, source_label).
 
         source_label is one of: 'database', 'static', 'fallback'.
-        Used by the test plan to verify the three-tier architecture."""
+        When `entity` (a canonical course name) is set, the response is
+        narrowed to that single programme - this is how multi-turn
+        consulting works ("price of it" -> price of THE course just
+        discussed)."""
+
+        # Per-entity overrides come first - they only fire when the
+        # user clearly meant a specific programme.
+        if entity:
+            if tag == 'fees':
+                resp = self._respond_fees_for_course(entity)
+                if resp:
+                    return resp, 'database'
+            if tag == 'courses':
+                resp = self._respond_course_detail(entity)
+                if resp:
+                    return resp, 'database'
 
         if tag in DYNAMIC_INTENTS:
             try:
@@ -131,6 +230,46 @@ class EduBot:
 
         return ("I'm sorry, I don't have information about that. "
                 "Please try a different question."), 'fallback'
+
+    # ---------------- Entity extraction (for multi-turn) ----------------
+
+    @staticmethod
+    def _extract_course_entity(text):
+        """Identify a specific course mentioned in `text`.
+
+        Strategy:
+          1. Direct substring match against canonical course names from
+             the DB (highest precision).
+          2. Course-code match (e.g. 'CS101').
+          3. Alias match against _COURSE_ALIASES for shorthand the user
+             is likely to type ('cs', 'mba', 'data science').
+
+        Returns the canonical course name, or None if no match.
+        """
+        if not text:
+            return None
+        text_lo = text.lower()
+        rows = db.list_courses()
+        if not rows:
+            return None
+
+        # 1) full canonical name appears verbatim
+        for r in rows:
+            if r['name'] and r['name'].lower() in text_lo:
+                return r['name']
+        # 2) course code (CS101, MBA01, ...)
+        for r in rows:
+            code = r.get('code') or ''
+            if code and re.search(r'\b' + re.escape(code.lower()) + r'\b', text_lo):
+                return r['name']
+        # 3) alias -> needle, then needle must appear in some course name
+        for alias, needle in _COURSE_ALIASES.items():
+            if not re.search(r'\b' + re.escape(alias) + r'\b', text_lo):
+                continue
+            for r in rows:
+                if needle in (r['name'] or '').lower():
+                    return r['name']
+        return None
 
     # The following _* methods build live responses from the DB.
     # Each one corresponds to one DYNAMIC_INTENTS entry.
@@ -169,7 +308,47 @@ class EduBot:
             for r in pg:
                 lines.append(f"  - {r['name']} ({r['code']}) "
                              f"- {r['faculty']} - ${r['fee_per_year']}/year")
-        lines.append("\nWould you like details about any specific programme?")
+        return "\n".join(lines)
+
+    @staticmethod
+    def _respond_course_detail(course_name):
+        """Per-course detail card (used when the user has narrowed down to
+        a single programme during a multi-turn chat)."""
+        rows = [r for r in db.list_courses() if r['name'] == course_name]
+        if not rows:
+            return None
+        r = rows[0]
+        lines = [f"Here are the details for {r['name']} ({r['code']}):"]
+        lines.append(f"  - Level:    {r['level']}")
+        lines.append(f"  - Faculty:  {r['faculty']}")
+        lines.append(f"  - Duration: {r['duration_years']} years")
+        lines.append(f"  - Tuition:  ${r['fee_per_year']}/year")
+        if r.get('description'):
+            lines.append("")
+            lines.append(r['description'])
+        return "\n".join(lines)
+
+    @staticmethod
+    def _respond_fees_for_course(course_name):
+        """Fees for ONE specific programme - the answer to a follow-up
+        like 'price of it' once a course is in the conversation context."""
+        rows = [r for r in db.list_courses() if r['name'] == course_name]
+        if not rows:
+            return None
+        r = rows[0]
+        per_sem = r['fee_per_year'] // 2
+        try:
+            total = int(round(r['fee_per_year'] * float(r['duration_years'])))
+        except (TypeError, ValueError):
+            total = None
+        lines = [
+            f"Tuition for {r['name']} ({r['code']}):",
+            f"  - ${r['fee_per_year']}/year",
+            f"  - ${per_sem}/semester (paid in two instalments)",
+        ]
+        if total is not None:
+            lines.append(f"  - Total programme cost: ~${total} "
+                         f"over {r['duration_years']} years")
         return "\n".join(lines)
 
     @staticmethod

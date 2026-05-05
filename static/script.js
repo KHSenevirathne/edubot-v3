@@ -7,6 +7,10 @@
 //
 // Capabilities here:
 //   - sending messages with input validation
+//   - per-browser session ID so the server can do multi-turn dialogue
+//     (resolving "it" / "this course" to a previously mentioned entity)
+//   - mood-changing avatar driven by the bot's confidence + answer source
+//   - optional voice input (Web Speech API) and read-aloud (speechSynthesis)
 //   - XSS-safe rendering of user messages
 //   - feedback (thumbs-up / thumbs-down) buttons under every bot reply
 //   - on thumbs-down: inline correction picker -> POST /feedback
@@ -18,12 +22,56 @@ const chatMessages = document.getElementById('chatMessages');
 const userInput = document.getElementById('userInput');
 const sendBtn = document.getElementById('sendBtn');
 const quickActions = document.getElementById('quickActions');
+const headerAvatar = document.getElementById('headerAvatar');
+const headerFace = document.getElementById('botAvatarFace');
+const moodLabel = document.getElementById('botMoodLabel');
+const micBtn = document.getElementById('micBtn');
+const ttsToggle = document.getElementById('ttsToggle');
 
 // Cache of intent tags - populated once on first need from /api/intents.
 let intentCache = null;
 
 // Track the last bot turn so we know what feedback refers to.
 let lastBotTurn = null;
+
+// ---------- Session ID (multi-turn dialogue) ----------
+// We persist a single opaque session token per browser so the backend
+// can remember the entity ("BSc Computer Science") that was last
+// discussed and resolve "it" / "this one" to it on the next turn.
+const SESSION_KEY = 'edubot.sessionId';
+
+function newSessionId() {
+    if (window.crypto && typeof window.crypto.randomUUID === 'function') {
+        return window.crypto.randomUUID().replace(/-/g, '');
+    }
+    // Fallback for older browsers - good enough as a session token.
+    return 'sid' + Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
+}
+
+function getSessionId() {
+    let id = null;
+    try {
+        id = localStorage.getItem(SESSION_KEY);
+    } catch (_) { /* private mode */ }
+    if (!id) {
+        id = newSessionId();
+        try { localStorage.setItem(SESSION_KEY, id); } catch (_) { /* ignore */ }
+    }
+    return id;
+}
+
+function resetSessionId() {
+    const old = (() => { try { return localStorage.getItem(SESSION_KEY); } catch (_) { return null; } })();
+    try { localStorage.removeItem(SESSION_KEY); } catch (_) { /* ignore */ }
+    if (old) {
+        // Best-effort - server-side reset, but don't block the UI on it.
+        fetch('/session/reset', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ session_id: old }),
+        }).catch(() => { /* ignore */ });
+    }
+}
 
 // ---------- Input validation helpers ----------
 
@@ -41,6 +89,16 @@ const BAD_CHARS_RE = new RegExp(
     'g'
 );
 
+// Quality thresholds - kept in sync with app/validate.py so client and
+// server agree on what counts as junk input.
+const MAX_ALPHA_RUN   = 30;     // longest unbroken letter run
+const MAX_DIGIT_RUN   = 9;      // longest unbroken digit run
+const MIN_LETTER_RATIO = 0.30;  // min proportion of letters in the message
+
+const ALPHA_RUN_RE = new RegExp(`[A-Za-z]{${MAX_ALPHA_RUN + 1},}`);
+const DIGIT_RUN_RE = new RegExp(`\\d{${MAX_DIGIT_RUN + 1},}`);
+const LETTER_RE    = /[A-Za-z]/g;
+
 function trimAndCheck(raw, minLen, maxLen) {
     if (typeof raw !== 'string') return { ok: false, reason: 'invalid input' };
     const cleaned = raw.replace(BAD_CHARS_RE, '').trim();
@@ -51,12 +109,50 @@ function trimAndCheck(raw, minLen, maxLen) {
     return { ok: true, value: cleaned };
 }
 
+// Heuristic quality gate. Returns { ok: true } or { ok: false, reason }.
+// Mirrors app/validate.py:check_message_quality.
+function checkQuality(text) {
+    if (ALPHA_RUN_RE.test(text)) {
+        return {
+            ok: false,
+            reason: "That looks like gibberish - try asking a real question, e.g. 'what courses do you offer?'",
+        };
+    }
+    if (DIGIT_RUN_RE.test(text)) {
+        return {
+            ok: false,
+            reason: "Long number sequences (phone numbers, account numbers) aren't valid questions. Ask in words.",
+        };
+    }
+    if (text.length >= 4) {
+        const letters = (text.match(LETTER_RE) || []).length;
+        if (letters / text.length < MIN_LETTER_RATIO) {
+            return {
+                ok: false,
+                reason: 'Please ask a question in words - that input is mostly symbols or numbers.',
+            };
+        }
+    }
+    return { ok: true };
+}
+
 // ---------- Send / receive ----------
 
 function refreshSendButton() {
     const v = trimAndCheck(userInput.value, MIN_TEXT_LEN, MAX_MESSAGE_LEN);
-    sendBtn.disabled = !v.ok;
-    sendBtn.classList.toggle('is-disabled', !v.ok);
+    let ok = v.ok;
+    let reason = v.reason;
+    if (ok) {
+        const q = checkQuality(v.value);
+        if (!q.ok) { ok = false; reason = q.reason; }
+    }
+    sendBtn.disabled = !ok;
+    sendBtn.classList.toggle('is-disabled', !ok);
+    // Stash the reason on the button so the click handler can show it.
+    sendBtn.dataset.reason = ok ? '' : (reason || 'invalid input');
+    if (userInput) {
+        userInput.title = ok ? '' : (reason || '');
+    }
 }
 
 userInput.addEventListener('input', refreshSendButton);
@@ -66,12 +162,19 @@ userInput.addEventListener('keypress', (e) => {
 
 function sendMessage() {
     const v = trimAndCheck(userInput.value, MIN_TEXT_LEN, MAX_MESSAGE_LEN);
-    if (!v.ok) {
-        // Provide a tiny shake animation so the failure is visible.
+    const failedClient = !v.ok;
+    const q = v.ok ? checkQuality(v.value) : { ok: false, reason: v.reason };
+    if (failedClient || !q.ok) {
+        // Shake the input and surface the reason as a chat message so
+        // the user knows WHY their input was rejected (not just "send
+        // is disabled").
         userInput.classList.remove('input-error');
         // eslint-disable-next-line no-void
         void userInput.offsetWidth;
         userInput.classList.add('input-error');
+        const reason = q.reason || v.reason || 'Invalid input.';
+        appendMessage(reason, 'bot', 0, 'error', 'fallback');
+        updateMood(0, 'fallback', 'error');
         return;
     }
     const message = v.value;
@@ -89,11 +192,22 @@ function sendMessage() {
     fetch('/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message }),
+        body: JSON.stringify({ message, session_id: getSessionId() }),
     })
-        .then((r) => r.json())
-        .then((data) => {
+        .then(async (r) => {
+            const data = await r.json().catch(() => ({}));
+            return { ok: r.ok, status: r.status, data };
+        })
+        .then(({ ok, data }) => {
             removeTypingIndicator();
+            if (!ok) {
+                // Server-side validation rejection (400) - show the
+                // reason inline rather than a generic error.
+                const reason = data.error || 'Sorry, that input was rejected by the server.';
+                appendMessage(reason, 'bot', 0, 'error', 'fallback');
+                updateMood(0, 'fallback', 'error');
+                return;
+            }
             lastBotTurn = {
                 user_message: message,
                 bot_response: data.response,
@@ -101,11 +215,14 @@ function sendMessage() {
                 confidence: data.confidence,
             };
             appendMessage(data.response, 'bot', data.confidence, data.tag, data.source);
+            updateMood(data.confidence, data.source, data.tag);
+            speak(data.response);
         })
         .catch((err) => {
             console.error(err);
             removeTypingIndicator();
             appendMessage("Sorry, I'm having trouble connecting. Please try again.", 'bot', 0, 'error', 'fallback');
+            updateMood(0, 'fallback', 'error');
         });
 }
 
@@ -115,6 +232,11 @@ function sendQuickMessage(message) {
 }
 
 function clearChat() {
+    resetSessionId();
+    if (typeof window.speechSynthesis !== 'undefined') {
+        window.speechSynthesis.cancel();
+    }
+    updateMood(1.0, 'static', 'greeting');
     chatMessages.innerHTML = `
         <div class="welcome-card">
             <div class="welcome-emoji">&#127891;</div>
@@ -166,7 +288,16 @@ function appendMessage(text, sender, confidence, tag, source) {
 
     const avatar = document.createElement('div');
     avatar.className = 'message-avatar';
-    avatar.textContent = sender === 'bot' ? 'E' : 'U';
+    if (sender === 'bot') {
+        const mood = moodFor(confidence, source, tag);
+        avatar.classList.add(`mood-${mood.name}`);
+        const face = document.createElement('span');
+        face.className = 'mood-face';
+        face.textContent = mood.face;
+        avatar.appendChild(face);
+    } else {
+        avatar.textContent = 'U';
+    }
 
     const content = document.createElement('div');
     content.className = 'message-content';
@@ -344,11 +475,12 @@ document.addEventListener('DOMContentLoaded', refreshSendButton);
 // ---------- Typing indicator ----------
 
 function showTypingIndicator() {
+    setMood('thinking', '\u{1F914}', 'Thinking...');     // thinking face
     const div = document.createElement('div');
     div.className = 'message bot-message';
     div.id = 'typingIndicator';
     div.innerHTML = `
-        <div class="message-avatar">E</div>
+        <div class="message-avatar mood-thinking"><span class="mood-face">&#129300;</span></div>
         <div class="message-content">
             <div class="typing-indicator"><span></span><span></span><span></span></div>
         </div>
@@ -373,3 +505,152 @@ function currentTime() {
         hour: 'numeric', minute: '2-digit', hour12: true,
     });
 }
+
+// ---------- Mood (emotional intelligence) ----------
+//
+// The avatar's expression reflects how confident we were in the last
+// answer and where it came from. Visible feedback for the user, plus
+// a low-cost ticked box on the brief's "emotional intelligence" trait.
+
+function moodFor(confidence, source, tag) {
+    if (tag === 'fallback' || source === 'fallback' || tag === 'error') {
+        return { name: 'confused', face: '\u{1F615}', label: "Hmm, I'm not sure" };  // confused face
+    }
+    if (tag === 'clarify') {
+        return { name: 'thinking', face: '\u{1F914}', label: 'Need a bit more info' };
+    }
+    const c = Number(confidence) || 0;
+    if (c >= 0.7 || source === 'database') {
+        return { name: 'happy', face: '\u{1F642}', label: 'Happy to help' };  // slight smile
+    }
+    if (c >= 0.4) {
+        return { name: 'neutral', face: '\u{1F610}', label: 'Best guess answer' };  // neutral face
+    }
+    return { name: 'confused', face: '\u{1F615}', label: 'Low confidence' };
+}
+
+function setMood(name, face, label) {
+    if (!headerAvatar || !headerFace) return;
+    headerAvatar.classList.remove('mood-happy', 'mood-neutral', 'mood-confused', 'mood-thinking');
+    headerAvatar.classList.add(`mood-${name}`);
+    headerFace.textContent = face;
+    headerAvatar.classList.add('is-bouncing');
+    setTimeout(() => headerAvatar.classList.remove('is-bouncing'), 250);
+    if (moodLabel && label) moodLabel.textContent = label;
+}
+
+function updateMood(confidence, source, tag) {
+    const m = moodFor(confidence, source, tag);
+    setMood(m.name, m.face, m.label);
+}
+
+// ---------- Voice input (Web Speech API) ----------
+
+const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+let recognition = null;
+let isListening = false;
+
+if (SpeechRecognition && micBtn) {
+    recognition = new SpeechRecognition();
+    recognition.lang = 'en-US';
+    recognition.continuous = false;
+    recognition.interimResults = false;
+    recognition.maxAlternatives = 1;
+
+    recognition.onresult = (event) => {
+        const transcript = event.results[0][0].transcript;
+        userInput.value = transcript;
+        refreshSendButton();
+        // A short delay before sending lets the user see what was heard.
+        setTimeout(() => {
+            if (!sendBtn.disabled) sendMessage();
+        }, 250);
+    };
+    recognition.onerror = (event) => {
+        console.warn('Speech recognition error:', event.error);
+        stopListening();
+    };
+    recognition.onend = () => stopListening();
+} else if (micBtn) {
+    // Browser doesn't support speech recognition - dim the button.
+    micBtn.classList.add('is-disabled');
+    micBtn.title = 'Voice input not supported in this browser';
+}
+
+function toggleVoiceInput() {
+    if (!recognition) return;
+    if (isListening) {
+        try { recognition.stop(); } catch (_) { /* ignore */ }
+        return;
+    }
+    try {
+        recognition.start();
+        isListening = true;
+        micBtn.classList.add('is-listening');
+        micBtn.setAttribute('aria-pressed', 'true');
+        userInput.placeholder = 'Listening...';
+    } catch (e) {
+        console.warn('Could not start recognition:', e);
+        stopListening();
+    }
+}
+
+function stopListening() {
+    isListening = false;
+    if (micBtn) {
+        micBtn.classList.remove('is-listening');
+        micBtn.setAttribute('aria-pressed', 'false');
+    }
+    if (userInput) {
+        userInput.placeholder = 'Ask me anything about the university...';
+    }
+}
+
+// ---------- Text-to-speech (read replies aloud) ----------
+
+const TTS_KEY = 'edubot.ttsEnabled';
+let ttsEnabled = false;
+
+function loadTtsPref() {
+    try {
+        ttsEnabled = localStorage.getItem(TTS_KEY) === '1';
+    } catch (_) {
+        ttsEnabled = false;
+    }
+    if (ttsToggle) {
+        ttsToggle.classList.toggle('is-active', ttsEnabled);
+        ttsToggle.setAttribute('aria-pressed', ttsEnabled ? 'true' : 'false');
+    }
+}
+
+function toggleTts() {
+    ttsEnabled = !ttsEnabled;
+    try { localStorage.setItem(TTS_KEY, ttsEnabled ? '1' : '0'); } catch (_) { /* ignore */ }
+    if (ttsToggle) {
+        ttsToggle.classList.toggle('is-active', ttsEnabled);
+        ttsToggle.setAttribute('aria-pressed', ttsEnabled ? 'true' : 'false');
+        ttsToggle.title = ttsEnabled ? 'Stop reading replies aloud' : 'Read replies aloud';
+    }
+    if (!ttsEnabled && typeof window.speechSynthesis !== 'undefined') {
+        window.speechSynthesis.cancel();
+    }
+}
+
+function speak(text) {
+    if (!ttsEnabled) return;
+    if (typeof window.speechSynthesis === 'undefined') return;
+    if (!text) return;
+    // Strip the bullet/list markup so the synthesiser reads naturally.
+    const spoken = String(text)
+        .replace(/^\s*-\s+/gm, '')
+        .replace(/\n+/g, '. ')
+        .replace(/\s{2,}/g, ' ');
+    const utt = new SpeechSynthesisUtterance(spoken.slice(0, 600));
+    utt.lang = 'en-US';
+    utt.rate = 1.0;
+    utt.pitch = 1.0;
+    window.speechSynthesis.cancel();
+    window.speechSynthesis.speak(utt);
+}
+
+loadTtsPref();
