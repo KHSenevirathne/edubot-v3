@@ -550,6 +550,258 @@ erDiagram
     chat_history }o..|| feedback : "may receive thumbs feedback"
 ```
 
+### 7-Chen. ER Diagram in Chen notation (alternative view)
+
+The diagram above uses **Crow's Foot** notation (industry standard,
+what Mermaid `erDiagram` produces natively). This second version
+uses **Chen notation** (the textbook style: rectangles =
+entities, ovals = attributes, diamonds = relationships).
+
+Mermaid does not support Chen natively, so we simulate it with a
+`flowchart` and shape classes. For a polished version, redraw this
+in draw.io's *ER (Chen)* shape group using the spec below.
+
+The Chen ER is split into two diagrams so each renders cleanly:
+
+- **§7-Chen-A** - Knowledge base (7 seed entities, no relationships)
+- **§7-Chen-B** - Runtime / ML (3 entities + 2 relationship diamonds)
+
+Together they cover all 10 tables in `database.py`.
+
+#### 7-Chen-A. Knowledge-base entities (7 read-only seed tables)
+
+These tables have **no foreign keys to anything** - they are
+queried by the bot when an intent matches their domain (e.g.
+`courses` table is read when the predicted intent is `courses`).
+Drawing them as isolated entity rectangles with attribute ovals is
+the correct Chen rendering for read-only seed data.
+
+```mermaid
+flowchart TB
+    classDef entity fill:#bfdbfe,stroke:#1e3a8a,color:#0f172a,stroke-width:2px,font-weight:bold
+    classDef attr   fill:#bbf7d0,stroke:#166534,color:#0f172a
+    classDef pk     fill:#fde68a,stroke:#92400e,color:#0f172a,stroke-width:2px,font-weight:bold
+
+    %% ---------------- courses ----------------
+    c_pk(("id (PK)")):::pk
+    c_code(("code (UK)")):::pk
+    c_name(("name")):::attr
+    c_level(("level")):::attr
+    c_fac(("faculty")):::attr
+    c_dur(("duration_years")):::attr
+    c_fee(("fee_per_year")):::attr
+    c_desc(("description")):::attr
+    Courses["courses"]:::entity
+    c_pk --- Courses
+    c_code --- Courses
+    c_name --- Courses
+    c_level --- Courses
+    c_fac --- Courses
+    c_dur --- Courses
+    c_fee --- Courses
+    c_desc --- Courses
+
+    %% ---------------- faculty ----------------
+    fa_pk(("id (PK)")):::pk
+    fa_title(("title")):::attr
+    fa_name(("name")):::attr
+    fa_dept(("department")):::attr
+    fa_exp(("expertise")):::attr
+    fa_email(("email")):::attr
+    fa_oh(("office_hours")):::attr
+    fa_dean(("is_dean")):::attr
+    Faculty["faculty"]:::entity
+    fa_pk --- Faculty
+    fa_title --- Faculty
+    fa_name --- Faculty
+    fa_dept --- Faculty
+    fa_exp --- Faculty
+    fa_email --- Faculty
+    fa_oh --- Faculty
+    fa_dean --- Faculty
+
+    %% ---------------- events ----------------
+    e_pk(("id (PK)")):::pk
+    e_name(("name")):::attr
+    e_start(("start_date")):::attr
+    e_end(("end_date")):::attr
+    e_loc(("location")):::attr
+    e_cat(("category")):::attr
+    e_desc(("description")):::attr
+    Events["events"]:::entity
+    e_pk --- Events
+    e_name --- Events
+    e_start --- Events
+    e_end --- Events
+    e_loc --- Events
+    e_cat --- Events
+    e_desc --- Events
+
+    %% ---------------- exams ----------------
+    x_pk(("id (PK)")):::pk
+    x_type(("exam_type")):::attr
+    x_start(("start_date")):::attr
+    x_end(("end_date")):::attr
+    x_fmt(("format")):::attr
+    x_notes(("notes")):::attr
+    Exams["exams"]:::entity
+    x_pk --- Exams
+    x_type --- Exams
+    x_start --- Exams
+    x_end --- Exams
+    x_fmt --- Exams
+    x_notes --- Exams
+
+    %% ---------------- scholarships ----------------
+    s_pk(("id (PK)")):::pk
+    s_name(("name (UK)")):::pk
+    s_pct(("max_percentage")):::attr
+    s_elig(("eligibility")):::attr
+    s_desc(("description")):::attr
+    Scholar["scholarships"]:::entity
+    s_pk --- Scholar
+    s_name --- Scholar
+    s_pct --- Scholar
+    s_elig --- Scholar
+    s_desc --- Scholar
+
+    %% ---------------- hostel_rooms ----------------
+    h_pk(("id (PK)")):::pk
+    h_room(("room_type (UK)")):::pk
+    h_cap(("capacity")):::attr
+    h_price(("price_per_semester")):::attr
+    h_amen(("amenities")):::attr
+    Hostel["hostel_rooms"]:::entity
+    h_pk --- Hostel
+    h_room --- Hostel
+    h_cap --- Hostel
+    h_price --- Hostel
+    h_amen --- Hostel
+
+    %% ---------------- kv_facts ----------------
+    k_pk(("key (PK)")):::pk
+    k_val(("value")):::attr
+    k_cat(("category")):::attr
+    KV["kv_facts"]:::entity
+    k_pk --- KV
+    k_val --- KV
+    k_cat --- KV
+```
+
+#### 7-Chen-B. Runtime / ML entities (with relationships)
+
+These three tables are written at runtime and carry the only two
+relationships in the schema:
+
+```mermaid
+flowchart TB
+    classDef entity fill:#bfdbfe,stroke:#1e3a8a,color:#0f172a,stroke-width:2px,font-weight:bold
+    classDef attr   fill:#bbf7d0,stroke:#166534,color:#0f172a
+    classDef pk     fill:#fde68a,stroke:#92400e,color:#0f172a,stroke-width:2px,font-weight:bold
+    classDef rel    fill:#1f2937,stroke:#4b5563,color:#fff,stroke-width:2px
+
+    %% ---------------- chat_history ----------------
+    ch_pk(("id (PK)")):::pk
+    ch_msg(("user_message")):::attr
+    ch_resp(("bot_response")):::attr
+    ch_int(("intent")):::attr
+    ch_conf(("confidence")):::attr
+    ch_src(("response_source")):::attr
+    ch_at(("created_at")):::attr
+    Chat["chat_history"]:::entity
+    ch_pk --- Chat
+    ch_msg --- Chat
+    ch_resp --- Chat
+    ch_int --- Chat
+    ch_conf --- Chat
+    ch_src --- Chat
+    ch_at --- Chat
+
+    %% ---------------- feedback ----------------
+    f_pk(("id (PK)")):::pk
+    f_msg(("user_message")):::attr
+    f_resp(("bot_response")):::attr
+    f_pred(("predicted_intent")):::attr
+    f_conf(("confidence")):::attr
+    f_help(("helpful")):::attr
+    f_exp(("expected_intent")):::attr
+    f_at(("created_at")):::attr
+    Feedback["feedback"]:::entity
+    f_pk --- Feedback
+    f_msg --- Feedback
+    f_resp --- Feedback
+    f_pred --- Feedback
+    f_conf --- Feedback
+    f_help --- Feedback
+    f_exp --- Feedback
+    f_at --- Feedback
+
+    %% ---------------- learned_patterns ----------------
+    l_pk(("id (PK)")):::pk
+    l_pat(("pattern")):::attr
+    l_int(("intent")):::attr
+    l_src(("source")):::attr
+    l_app(("approved")):::attr
+    l_used(("used_in_model")):::attr
+    l_at(("created_at")):::attr
+    Learned["learned_patterns"]:::entity
+    l_pk --- Learned
+    l_pat --- Learned
+    l_int --- Learned
+    l_src --- Learned
+    l_app --- Learned
+    l_used --- Learned
+    l_at --- Learned
+
+    %% ---------------- Relationships (diamonds) ----------------
+    Chat --- MayReceive{"may receive<br/>thumbs feedback<br/>1 .. 0..1"}:::rel
+    MayReceive --- Feedback
+
+    Feedback --- Produces{"produces<br/>when helpful=0<br/>+ expected_intent<br/>1 .. 0..many"}:::rel
+    Produces --- Learned
+```
+
+### 7-Chen-Spec. Data dictionary for manual draw.io / ERDPlus
+
+If you redraw the full Chen ER (all 10 entities) in **draw.io** or
+**ERDPlus**, use this spec as a checklist. Each entity is a
+rectangle; each attribute is an oval; key attributes have
+underlined labels; relationships are diamonds with cardinality
+labels.
+
+**Entities (10) and their attributes:**
+
+| Entity | Key attributes (underline) | Other attributes |
+|---|---|---|
+| `courses` | id (PK), code (UK) | name, level, faculty, duration_years, fee_per_year, description, updated_at |
+| `faculty` | id (PK) | title, name, department, expertise, email, office_hours, is_dean |
+| `events` | id (PK) | name, start_date, end_date, location, category, description |
+| `exams` | id (PK) | exam_type, start_date, end_date, format, notes |
+| `scholarships` | id (PK), name (UK) | max_percentage, eligibility, description |
+| `hostel_rooms` | id (PK), room_type (UK) | capacity, price_per_semester, amenities |
+| `kv_facts` | key (PK) | value, category |
+| `feedback` | id (PK) | user_message, bot_response, predicted_intent, confidence, helpful, expected_intent, created_at |
+| `learned_patterns` | id (PK) | pattern, intent, source, approved, created_at, used_in_model |
+| `chat_history` | id (PK) | user_message, bot_response, intent, confidence, response_source, created_at |
+
+**Relationships (2):**
+
+| Diamond | Between | Cardinality | Trigger condition |
+|---|---|---|---|
+| **may receive** | `chat_history` --- `feedback` | one chat row -> 0 or 1 feedback row | user clicks 👍 or 👎 |
+| **produces** | `feedback` --- `learned_patterns` | one feedback row -> 0 or 1 pattern row | helpful=0 AND expected_intent is not null |
+
+**Floating entities (no relationships):**
+
+The 7 seed tables (`courses`, `faculty`, `events`, `exams`,
+`scholarships`, `hostel_rooms`, `kv_facts`) have no foreign keys
+to any other table. In a Chen diagram they appear as isolated
+entity rectangles. Their **logical** link to the runtime tables
+is via the `intent` string column on `chat_history` and `feedback`
+- when `intent='courses'`, the bot has answered from the `courses`
+table - but this is application-layer routing, not a database
+relationship, so do not draw a diamond for it.
+
 ---
 
 ## 8. ML Pipeline Flowchart (VERY IMPORTANT)
