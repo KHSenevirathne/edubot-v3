@@ -55,6 +55,72 @@ _COURSE_ALIASES = {
 }
 
 
+# Keyword safety net for the classifier. When the SVM returns a
+# low-confidence prediction (< confidence_threshold), we still try to
+# rescue the turn by scanning the original message for an unambiguous
+# intent keyword.
+#
+# This addresses cases where the trained model is unsure on a long
+# phrasing whose distinctive token IS in the training data, e.g.
+# "What events are coming up?" gets ~0.31 from the SVM because most of
+# its tokens (what / are / coming / up) are stripped by the stopword
+# list, but the surviving 'event' token is a strong signal we shouldn't
+# discard.
+#
+# Order matters: more specific keywords come first so 'mba' beats
+# 'admission' and 'tuition' beats 'fee' inside compound phrases.
+_INTENT_KEYWORDS = (
+    ('events',      ('event', 'events', 'hackathon', 'hackathons',
+                     'fest', 'festival', 'festivals',
+                     'seminar', 'seminars', 'workshop', 'workshops',
+                     'club', 'clubs', 'society', 'societies')),
+    ('hostel',      ('hostel', 'dorm', 'dormitory', 'accommodation',
+                     'lodging', 'room and board')),
+    ('library',     ('library',)),
+    ('scholarship', ('scholarship', 'scholarships', 'bursary', 'fee waiver',
+                     'financial aid', 'grant', 'grants')),
+    ('faculty',     ('lecturer', 'lecturers', 'professor', 'professors',
+                     'faculty', 'dean', 'teacher', 'teachers')),
+    ('exams',       ('exam', 'exams', 'examination', 'midterm', 'midterms',
+                     'finals', 'resit')),
+    ('timetable',   ('timetable', 'schedule', 'class hours',
+                     'lecture schedule')),
+    ('admission',   ('admission', 'admissions', 'apply', 'application',
+                     'enrol', 'enroll', 'enrolment', 'enrollment')),
+    ('fees',        ('tuition', 'fees', 'fee', 'price', 'cost')),
+    ('contact',     ('contact', 'phone number', 'email address',
+                     'helpline')),
+    ('courses',     ('course', 'courses', 'programme', 'programmes',
+                     'program', 'programs', 'degree', 'degrees',
+                     'major', 'majors')),
+)
+
+
+def _match_keyword_intent(user_input):
+    """Scan user_input for an unambiguous intent keyword.
+
+    Returns the intent tag, or None when no keyword fires. Matching is
+    word-boundary based on the lower-cased input so 'event' inside
+    'eventually' or 'fee' inside 'feedback' don't trigger a false hit.
+    """
+    if not user_input:
+        return None
+    text_lo = user_input.lower()
+    for tag, keywords in _INTENT_KEYWORDS:
+        for kw in keywords:
+            # Multi-word keywords ('class hours', 'fee waiver') need a
+            # plain substring match because \b doesn't sit between space
+            # characters; single-word keywords use word boundaries to
+            # avoid the eventually / feedback false-positives noted above.
+            if ' ' in kw:
+                if kw in text_lo:
+                    return tag
+            else:
+                if re.search(r'\b' + re.escape(kw) + r'\b', text_lo):
+                    return tag
+    return None
+
+
 class EduBot:
     """Main chatbot class. Loads model, predicts intent, builds response."""
 
@@ -153,9 +219,23 @@ class EduBot:
 
         tag, confidence = self.predict_intent(resolved_input)
 
-        # Low-confidence answers go straight to fallback.
+        # Low-confidence rescue. Before forcing fallback, see whether
+        # the message contains an unambiguous intent keyword (e.g.
+        # 'event', 'hostel'). This catches phrasings the classifier
+        # is uncertain on but whose meaning is plain to a human - the
+        # canonical example is "What events are coming up?" which
+        # the SVM scores at ~0.31 because stopword removal strips
+        # most of its distinctive tokens.
         if confidence < self.confidence_threshold:
-            tag = 'fallback'
+            keyword_tag = _match_keyword_intent(resolved_input)
+            if keyword_tag:
+                tag = keyword_tag
+                # Synthesise a "rescue" confidence so the badge in the
+                # UI reflects we're confident in the override even if
+                # the underlying SVM wasn't.
+                confidence = max(confidence, 0.6)
+            else:
+                tag = 'fallback'
 
         # Try to identify a specific course mentioned in the (resolved)
         # message. If the user is following up on the SAME entity, also

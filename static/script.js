@@ -240,7 +240,7 @@ function clearChat() {
     chatMessages.innerHTML = `
         <div class="welcome-card">
             <div class="welcome-emoji">&#127891;</div>
-            <h2>Welcome to EduBot v3</h2>
+            <h2>Welcome to EduBot</h2>
             <p>Ask me anything about courses, admissions, fees, exams, or campus life. If I get it wrong, click the thumbs-down and teach me.</p>
         </div>
         <div class="quick-actions" id="quickActions">

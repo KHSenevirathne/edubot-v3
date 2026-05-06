@@ -60,19 +60,21 @@ FACULTY = [
 
 EVENTS = [
     # (name, start_date, end_date, location, category, description)
-    ('Orientation Week',     '2026-01-12', '2026-01-16', 'Main Auditorium',
+    # Spread across July and August 2026 so every entry is genuinely
+    # "upcoming" relative to today (2026-05-06).
+    ('Orientation Week',     '2026-07-13', '2026-07-17', 'Main Auditorium',
      'Academic',     'Welcome programme for all new students.'),
-    ('Annual Hackathon',     '2026-02-21', '2026-02-22', 'Block C, Computing Lab',
+    ('Annual Hackathon',     '2026-07-25', '2026-07-26', 'Block C, Computing Lab',
      'Tech',         '24-hour coding competition open to all students.'),
-    ('Career Fair 2026',     '2026-03-15', '2026-03-15', 'Main Hall',
+    ('Career Fair 2026',     '2026-07-30', '2026-07-30', 'Main Hall',
      'Career',       'Top employers across IT, finance and consulting.'),
-    ('Sports Day',           '2026-04-05', '2026-04-05', 'University Stadium',
+    ('Sports Day',           '2026-08-08', '2026-08-08', 'University Stadium',
      'Sports',       'Inter-faculty athletics and team sports.'),
-    ('Cultural Festival',    '2026-05-10', '2026-05-12', 'Open-Air Theatre',
+    ('Cultural Festival',    '2026-08-14', '2026-08-16', 'Open-Air Theatre',
      'Cultural',     'Three-day festival with music, dance and food stalls.'),
-    ('AI Research Symposium','2026-06-08', '2026-06-09', 'Block A, Lecture Hall 1',
+    ('AI Research Symposium','2026-08-20', '2026-08-21', 'Block A, Lecture Hall 1',
      'Academic',     'Guest talks from leading AI researchers and student paper showcase.'),
-    ('Open Day',             '2026-07-19', '2026-07-19', 'Whole Campus',
+    ('Open Day',             '2026-08-29', '2026-08-29', 'Whole Campus',
      'Outreach',     'Campus tour and Q&A for prospective students and parents.'),
 ]
 
