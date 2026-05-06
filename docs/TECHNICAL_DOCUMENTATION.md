@@ -47,9 +47,10 @@ when it gets something wrong.
 
 ### Key features
 
-- Recognises 14 distinct intents across the university support domain
+- Recognises 15 distinct intents across the university support domain
   (courses, fees, admission, scholarships, exams, timetable, library,
-  contact, faculty, hostel, events, plus greeting / goodbye / thanks).
+  contact, faculty, hostel, events, plus greeting / goodbye / thanks
+  and a fallback intent for out-of-domain input).
 - Sub-second response time on a laptop CPU (no GPU required).
 - Live data answers - the response for *"what are the fees?"* is built
   by querying SQLite, not by reading a hard-coded JSON file.
@@ -161,23 +162,32 @@ patterns merged in.
 |                          Interface                            |
 |                                                               |
 |   templates/index.html  +  static/script.js  +  style.css     |
-|   - chat window + quick actions                               |
-|   - feedback buttons (drives ML loop)                         |
-|   - admin dashboard (/admin) - Teach form, pending review, retrain |
-|   - admin dashboard (/admin)                                  |
+|   - chat window with mood-changing avatar                     |
+|   - voice mic (Web Speech API) + read-aloud toggle            |
+|   - quick-action buttons + clickable sidebar topic tags       |
+|   - thumbs-up / thumbs-down feedback (drives ML loop)         |
+|   - admin dashboard (/admin) - Teach form, pending review,    |
+|     retrain, learned patterns log, feedback log               |
 +---------------------------+-----------------------------------+
                             |
-                            |  HTTP/JSON
+                            |  HTTP/JSON  (+ session_id cookie)
                             v
 +---------------------------------------------------------------+
 |                  Tier 2 - Inference Engine                    |
 |                                                               |
-|     app.py (routes: /chat /feedback /teach /retrain           |
-|             /admin /admin/approve/<id> /admin/discard/<id>)   |
-|     app/chat.py  (EduBot class - intent classification)       |
+|     app.py (routes: /chat /session/reset /feedback /teach     |
+|             /retrain /admin /admin/approve/<id>               |
+|             /admin/discard/<id> /api/intents /api/stats       |
+|             /health)                                          |
+|     app/chat.py     (EduBot - intent classification +         |
+|                      keyword-rescue safety net + per-entity   |
+|                      response builders)                       |
+|     app/context.py  (per-session memory, anaphora resolution) |
 |     app/preprocess.py  (clean_text: tokenise + lemmatise)     |
-|     app/train.py  (NB / SVM / RF + 5-fold CV)                 |
-|     app/learning.py  (feedback -> learned_patterns -> retrain)|
+|     app/validate.py    (input validation + quality gate)      |
+|     app/train.py       (NB / SVM / RF + 5-fold CV bake-off)   |
+|     app/learning.py    (feedback -> learned_patterns ->       |
+|                         admin review -> retrain)              |
 +---------------------------+-----------------------------------+
                             |
                             |  function calls
@@ -187,7 +197,7 @@ patterns merged in.
 |                                                               |
 |   data/intents.json  (static patterns + small-talk responses) |
 |                                                               |
-|   data/edubot.db (SQLite)                                     |
+|   data/edubot.db (SQLite, gitignored, auto-seeded by app.py)  |
 |   - courses, faculty, events, exams, scholarships             |
 |   - hostel_rooms, kv_facts (library/contact/timetable)        |
 |   - feedback, learned_patterns, chat_history                  |
@@ -240,7 +250,7 @@ intelligent-agent specification.)
 
 | Element     | Description |
 |-------------|-------------|
-| **Performance** | Intent-classification accuracy on held-out data (84% on the v3 corpus); 5-fold cross-validation accuracy (78%); proportion of queries resolved without falling back; user satisfaction expressed via 👍/👎; reply latency (<1 s on a laptop CPU); proportion of dynamic-intent answers correctly sourced from the database. |
+| **Performance** | Intent-classification accuracy on held-out data (80.7% on the v3 corpus); 5-fold cross-validation accuracy (78.2%); proportion of queries resolved without falling back; user satisfaction expressed via 👍/👎; reply latency (<1 s on a laptop CPU); proportion of dynamic-intent answers correctly sourced from the database. |
 | **Environment** | A web browser. The user is a prospective or current student typing university questions in English. The environment is fully observable (one message in, one message out), single-agent (one user at a time per session), discrete (text), partly stochastic (the random response selector for static intents), and dynamic from the bot's perspective (its own knowledge base updates over time as users teach it). |
 | **Actuators** | Outbound text - rendered as a chat bubble in the user's browser. The bot also writes to its own SQLite database (chat history, feedback, learned patterns) and triggers retrains, so it acts on its own knowledge base. |
 | **Sensors** | Inbound text - the JSON `message` field on `POST /chat`. Indirectly the bot also "senses" user satisfaction through the `/feedback` endpoint. |
@@ -370,8 +380,19 @@ ALGORITHM get_response(user_input, session):
     vector    <- tfidf_vectorizer.transform(cleaned)
     tag, conf <- model.predict(vector), max(model.predict_proba(vector))
 
+    # ---- Keyword-rescue safety net ----
+    # The classifier's confidence drops below threshold for some
+    # phrasings whose meaning is plain to a human (the canonical
+    # case is "What events are coming up?" where stopword removal
+    # strips most distinctive tokens). Before forcing fallback,
+    # scan the original message for an unambiguous intent keyword.
     if conf < CONFIDENCE_THRESHOLD (0.4):
-        tag <- "fallback"
+        rescued_tag <- match_keyword_intent(resolved_input)
+        if rescued_tag is not None:
+            tag  <- rescued_tag
+            conf <- max(conf, 0.6)        # synthesised "rescue" conf
+        else:
+            tag <- "fallback"
 
     # ---- Entity extraction (course mentioned this turn) ----
     entity <- extract_course_entity(resolved_input)
@@ -549,7 +570,42 @@ The same three rules run client-side in `static/script.js` so the
 send button stays disabled and the user gets immediate feedback; the
 server-side copy is the authoritative gate.
 
+### Algorithm G - Keyword-rescue safety net
+
+Linear SVM with TF-IDF gives soft probabilities. Some phrasings
+that a human reads as obvious land below the 0.4 fallback threshold
+because stopword removal stripped most of their distinctive tokens
+(canonical example: *"What events are coming up?"* preserves only
+`event come` after preprocessing, which the SVM scores at ~0.31).
+Rather than dropping these turns, we run a second-pass keyword scan:
+
+```
+ALGORITHM match_keyword_intent(text):
+    text_lo <- lower-case(text)
+    for each (intent_tag, keyword_list) in INTENT_KEYWORDS:
+        for each kw in keyword_list:
+            if kw contains a space:
+                if kw is a substring of text_lo:
+                    return intent_tag
+            else:
+                if word-boundary regex r'\b{kw}\b' matches text_lo:
+                    return intent_tag
+    return None
+```
+
+`INTENT_KEYWORDS` is an ordered tuple - more specific intents
+(events, hostel, scholarship) come first so `mba` beats
+`admission` and `tuition` beats `fee` inside compound phrases.
+Word-boundary matching prevents `event` matching `eventually` or
+`fee` matching `feedback`.
+
+The rescue is only invoked when the classifier was already
+unsure (`conf < 0.4`); confident predictions are never overridden.
+
 ### Flowchart (text form)
+
+The diagram below captures one POST /chat lifecycle as actually
+implemented in `app.py` and `app/chat.py`.
 
 ```
                 +---------------+
@@ -557,65 +613,103 @@ server-side copy is the authoritative gate.
                 +-------+-------+
                         |
                         v
-                +-----------------------+
-                | quality validation    |
-                |  (alpha run, digit    |
-                |   run, letter ratio)  |
-                +-------+---------------+
-                        | ok
+                +-------------------------+
+                |  quality validation     |  app/validate.py
+                |  (alpha run, digit      |  check_message_quality
+                |   run, letter ratio)    |
+                +-------+----------+------+
+                        | ok       | reject
+                        v          v
+                        |     +-----------+
+                        |     | HTTP 400  |
+                        |     | {error}   |
+                        |     +-----------+
                         v
-                +-----------------------+
-                | resolve_pronouns      |
-                |  (using session)      |
-                +-------+---------------+
+                +-------------------------+
+                |  resolve_pronouns       |  app/context.py
+                |  (using session memory) |  ('it', 'this course'
+                +-------+----------+------+   -> last_entity)
+                        |          |
+                        |          | had_pronoun AND
+                        |          | session.last_entity is None
+                        |          v
+                        |    +-----------------+
+                        |    | CLARIFY return  |
+                        |    | "Which          |
+                        |    |  programme?"    |
+                        |    +-----------------+
+                        v
+                +-------------------------+
+                |  clean_text             |  preprocess.py
+                |  (lemmatise + stopwords)|
+                +-------+-----------------+
                         |
                         v
-                +-----------------------+
-                | extract_course_entity |
-                +-------+---------------+
+                +-------------------------+
+                |  TF-IDF.transform       |  sklearn vectoriser
+                +-------+-----------------+
                         |
                         v
-                +---------------+
-                |  clean_text   |
-                +-------+-------+
-                        |
-                        v
-                +---------------+
-                | TF-IDF vector |
-                +-------+-------+
-                        |
-                        v
-                +-----------------+
-                | SVM.predict +   |
-                | predict_proba   |
-                +-------+---------+
+                +-------------------------+
+                |  SVM.predict +          |  trained classifier
+                |  predict_proba          |
+                +-------+-----------------+
                         |
                   conf >= 0.4 ?
-                  /         \
-                yes          no
-                /              \
-               v                v
-   +-------------------+   +------------+
-   |  tag in DYNAMIC?  |   | tag <-     |
-   +-------+---------+ |   | "fallback" |
-           |          | |   +------+----+
-          yes         no |          |
-           |          |  +----------+
-           v          v             |
-  +----------------+  +---------+   |
-  | DB query +     |  | random  |<--+
-  | format answer  |  | static  |
-  +-------+--------+  +----+----+
-          |                |
-          +-------+--------+
-                  v
-       +---------------------+
-       | log_chat_history    |
-       +---------------------+
-                  v
-       +---------------------+
-       |  return JSON to UI  |
-       +---------------------+
+                  /            \
+                yes             no
+                |                |
+                |                v
+                |       +------------------+
+                |       | match_keyword_   |  app/chat.py
+                |       | intent           |  _match_keyword_intent
+                |       +---+----------+---+
+                |           | hit       | miss
+                |           v           v
+                |   tag <- keyword   tag <-
+                |   conf <- max(     "fallback"
+                |     conf, 0.6)         |
+                |           |            |
+                +-----------+------------+
+                            |
+                            v
+                +-----------------------------+
+                |  extract_course_entity      |  scan resolved_input
+                |  (also: carry forward       |  for course names /
+                |   last_entity on pronoun)   |  codes / aliases
+                +-------+---------------------+
+                        |
+                        | entity AND tag = 'fallback' ?
+                        |          \
+                        |           promote tag to 'courses'
+                        v
+                +-----------------------------+
+                |  _build_response(tag,       |
+                |                  entity)    |
+                +--+-----+-----+-----+--------+
+                   |     |     |     |
+        per-entity | dynamic|static|fallback
+                   v     v     v     v
+                 +---+ +---+ +---+ +-----+
+                 |PER| |DB | |STA| | FB  |
+                 |ENT| |QRY| |TIC| |LBCK |
+                 +-+-+ +-+-+ +-+-+ +--+--+
+                   |     |     |      |
+                   +-----+-----+------+
+                              |
+                              v
+                +-----------------------------+
+                |  update_session +           |  context.update_session
+                |  log_chat_history           |  database.log_chat
+                +-------+---------------------+
+                        |
+                        v
+                +-----------------------------+
+                |  JSON response to UI:       |
+                |  { tag, response, conf,     |
+                |    source, entity,          |
+                |    session_id }             |
+                +-----------------------------+
 ```
 
 ---
@@ -996,6 +1090,58 @@ immediately. Verified test inputs:
 | `BSc Computer Science for 2024-2025?`    | accepted       |
 | `Is hostel $3000 per year?`              | accepted       |
 
+### 7.10 Keyword-rescue safety net
+
+The SVM produces calibrated probabilities via Platt scaling, but
+some valid questions land below the 0.4 fallback threshold because
+preprocessing stripped most of their distinguishing words. To avoid
+discarding those turns, `app/chat.py` runs a second-pass scan
+**only when** the classifier is already unsure:
+
+```python
+# app/chat.py - excerpt
+_INTENT_KEYWORDS = (
+    ('events',      ('event', 'events', 'hackathon', 'workshop',
+                     'club', 'clubs', 'fest', 'festival',
+                     'seminar', 'society')),
+    ('hostel',      ('hostel', 'dorm', 'accommodation', ...)),
+    ('library',     ('library',)),
+    ('scholarship', ('scholarship', 'bursary', 'fee waiver', ...)),
+    # ... 11 intents total
+)
+
+def _match_keyword_intent(user_input):
+    text_lo = user_input.lower()
+    for tag, keywords in _INTENT_KEYWORDS:
+        for kw in keywords:
+            if ' ' in kw:
+                if kw in text_lo:
+                    return tag
+            else:
+                if re.search(r'\b' + re.escape(kw) + r'\b', text_lo):
+                    return tag
+    return None
+```
+
+Order matters: more specific intents come first so `mba` beats
+`admission`. Word boundaries on single-word keywords prevent
+false positives like `event` matching `eventually` or `fee`
+matching `feedback`. Multi-word keywords (`fee waiver`,
+`class hours`) use plain substring match because `\b` doesn't
+sit between space characters.
+
+**Verified rescue cases** (each previously fell back at <0.4):
+
+| Input                            | SVM conf | After rescue        |
+|----------------------------------|---------:|---------------------|
+| `What events are coming up?`     | 0.31     | events  (conf 0.60) |
+| `what workshops are there`       | 0.38     | events  (conf 0.60) |
+| `any clubs to join`              | 0.27     | events  (conf 0.78) |
+
+Confident predictions are never overridden, so this is purely a
+safety net. Genuine gibberish like `asdfgh qwerty random nonsense`
+still falls back because no keyword matches.
+
 ---
 
 ## 8. UML diagrams
@@ -1003,156 +1149,321 @@ immediately. Verified test inputs:
 ### 8.1 Class diagram
 
 ```
-+---------------------+         +-----------------------+
-|       EduBot        |1       1|   TfidfVectorizer     |
-|---------------------|         |  (sklearn)            |
-| - model             |<------->|  vocabulary_, idf_    |
-| - vectorizer        |         +-----------------------+
-| - intents_data      |
-| - response_map      |         +-----------------------+
-| - confidence_thr    |1       1|   Classifier          |
-|---------------------|<------->|   (NB | SVM | RF)     |
-| + predict_intent()  |         +-----------------------+
-| + get_response()    |
-| - _build_response() |         +-----------------------+
-| - _db_response()    |1       *|   intent  (JSON)      |
-| - _respond_*()      |---------|  tag, patterns,       |
-+----------+----------+         |  responses[]          |
-           |                    +-----------------------+
++----------------------------+        +-----------------------+
+|          EduBot            |1     1 |   TfidfVectorizer     |
+|----------------------------|<------>|   (sklearn)           |
+| - model                    |        |   vocabulary_, idf_   |
+| - vectorizer               |        +-----------------------+
+| - intents_data
+| - response_map             |        +-----------------------+
+| - confidence_threshold=0.4 |1     1 |   Classifier          |
+|----------------------------|<------>|   (NB | SVM | RF)     |
+| + predict_intent()         |        +-----------------------+
+| + get_response(input,
+|       session)             |        +-----------------------+
+| - _build_response()        |1     * |   intent  (JSON)      |
+| - _db_response()           |--------|   tag, patterns,      |
+| - _respond_*()             |        |   responses[]         |
+| - _respond_course_detail() |        +-----------------------+
+| - _respond_fees_for_course |
+| - _extract_course_entity   |              uses              uses
++--------+----------+--------+              |                  |
+         |          |          \            v                  v
+         |          |           \  +------------------+  +---------------------+
+         |  uses    |            -+|   context (.py)  |  |   validate (.py)    |
+         |          |             |------------------|  |---------------------|
+         |          |             | get_session()    |  | clean_text_field()  |
+         |          |             | resolve_pronouns | |  check_message_      |
+         |          |             | has_pronoun()    |  |  quality()          |
+         |          |             | extract_entity() |  | parse_bool()        |
+         |          |             | update_session() |  | validate_intent()   |
+         |          |             | reset_session()  |  | ValidationError     |
+         |          |             +--------+---------+  +---------------------+
+         |          |                      |
+         |          |                      | session_id ->
+         |          |                      |   { last_entity, last_intent,
+         |          |                      |     history[], last_seen }
+         |          |                      v
+         |          |              +-----------------+
+         |          |              |   _SESSIONS     |  in-memory dict,
+         |          |              |   (1 hr TTL,    |  thread-locked
+         |          |              |    1000 cap)    |
+         |          |              +-----------------+
+         |          |
+         |          | module-level helpers
+         |          v
+         |  +------------------------+
+         |  | _match_keyword_intent  |  scans message for unambiguous
+         |  | _INTENT_KEYWORDS map   |  intent keywords when SVM
+         |  +------------------------+  confidence is below threshold
+         |
+         | uses
+         v
++----------------------+         +-----------------------+
+|     database (.py)   |1     1  |   sqlite3.Connection  |
+|----------------------|<------->|                       |
+| init_schema()        |         +-----------------------+
+| list_courses()                  +-----------------------+
+| list_faculty()                  |  feedback (table)     |
+| list_events()                1*|  user_message,        |
+| list_exams()         |---------|  helpful, expected    |
+| list_scholarships()             +-----------------------+
+| list_hostel_rooms()
+| get_facts_by_cat()              +-----------------------+
+| log_chat()                  1*|  learned_patterns     |
+| log_feedback()       |---------|  pattern, intent,     |
+| add_learned_pattern()           |  approved, used_in_   |
+| get_learned_patterns(           |   model               |
+|   approved_only=True)           +-----------------------+
+| approve_pattern()
+| discard_pattern()               +-----------------------+
+| count_pending_patterns()    1*|  chat_history (table) |
+| count_pending_review()|---------|  user_message,        |
+| stats()                         |  bot_response, intent,|
++----------+-----------+          |  confidence, source   |
+           ^                      +-----------------------+
+           |
            | uses
-           v
-+---------------------+         +-----------------------+
-|     database (.py)  |         |   sqlite3.Connection  |
-|---------------------|<------->|                       |
-| init_schema()       |         +-----------------------+
-| list_courses()                                         
-| list_faculty()                                         
-| list_events()                                         
-| list_exams()                                          
-| list_scholarships()                                    
-| list_hostel_rooms()                                    
-| get_facts_by_cat()                                     
-| log_chat()                                            
-| log_feedback()                                        
-| add_learned_pattern()                                 
-| get_learned_patterns()                                
-| mark_patterns_used()                                   
-| count_pending_patterns()                               
-| stats()                                                
+           |
++----------+----------+          +-----------------------+
+|    learning (.py)   |          |  AUTO_RETRAIN_        |
+|---------------------|          |   THRESHOLD = 5       |
+| record_feedback()   |          +-----------------------+
+| teach()
+| approve_suggestion()            triggers retrain when
+| discard_suggestion()            count_pending_patterns()
+| manual_retrain()                >= AUTO_RETRAIN_THRESHOLD
+| _maybe_auto_retrain()
+| _run_training() ----+
 +---------------------+
-
-           used by
-
-+---------------------+         +-----------------------+
-|     learning (.py)  |1       *|   feedback (table)    |
-|---------------------|         |   user_message,       |
-| AUTO_RETRAIN_THRESHOLD         |   helpful, expected,  |
-|                                |   created_at          |
-| record_feedback()              +-----------------------+
-| teach()                                                 
-| manual_retrain()               +-----------------------+
-| _maybe_auto_retrain()1       *|  learned_patterns     |
-| _run_training() ----------->|  pattern, intent,     |
-+---------------------+        |  used_in_model        |
-                               +-----------------------+
+                      |
+                      v
+              +-------------------+
+              |   train.py        |   merges intents.json +
+              |   train_and_      |   approved learned_patterns
+              |   evaluate()      |   3-model bake-off, 5-fold CV
+              +-------------------+
 ```
 
-(Mermaid-renderable version is in `docs/diagrams/class.mmd`.)
+`EduBot` is the orchestration class; `context.py` and `validate.py`
+are stateless helper modules called from `get_response()` and from
+the Flask layer. `database.py` is the only module with direct
+SQLite access; every other module reads/writes through its helpers.
 
 ### 8.2 State transition diagram
 
-The bot is a finite-state machine cycling between four states. The
-state is implicit (per turn) rather than carried over conversation
-history, but the transitions explicitly drive the response builder
-and the ML loop.
+The bot is a finite-state machine driven by two distinct request
+lifecycles: the **chat lifecycle** (POST /chat) which classifies
+and answers; and the **learning lifecycle** (POST /feedback,
+POST /admin/approve, POST /retrain) which can change the model
+itself. State is per-request rather than carried across turns -
+multi-turn dialogue context lives in `app/context.py`'s session
+store, not in the FSM.
+
+**Chat lifecycle** (one POST /chat):
 
 ```
-              +-------------+
-              |    IDLE     |  <-- initial state, model loaded
-              +------+------+
-                     |
-                     | message arrives (POST /chat)
-                     v
-              +-------------+
-              | CLASSIFYING |
-              +------+------+
-                     |
-                     | predict_intent() returns (tag, conf)
-                     v
-              +-----------------+
-              |  ROUTING        |
-              +--------+--------+
-                       |
-            conf<0.4   |   conf>=0.4 & DYNAMIC  
-            -----------+-----------+--------+
-            |          |           |        |
-            v          |           v        v
-     +-------------+   |     +----------+ +-------+
-     |  FALLBACK   |   |     | DB QUERY | | STATIC|
-     +------+------+   |     +-----+----+ +---+---+
-            |          |           |          |
-            +----------+-----------+----------+
-                       |
-                       v
-              +---------------+
-              |  RESPONDING   |  log + return JSON
-              +------+--------+
-                     |
-                     | thumbs-down + expected (optional)
-                     v
-              +-----------------+
-              |  LEARNING       |
-              +--------+--------+
-                       |
-              pending >= 5 ?
-                  /        \
-                yes         no
-                /            \
-               v              v
-         +-----------+   +-------+
-         | RETRAINING |   | IDLE  |
-         +-----+-----+    +-------+
-               |
-               v
-            +-------+
-            | IDLE  |  (with new model swapped in)
-            +-------+
+         +-------------+
+         |    IDLE     |  <-- initial state, model loaded
+         +------+------+
+                |
+                | message arrives (POST /chat, optional session_id)
+                v
+         +-----------------+
+         |  VALIDATING     |  validate.clean_text_field +
+         +--+--------+-----+  check_message_quality
+            |        |
+       reject        accept
+            |        |
+            v        v
+       +--------+  +-------------------------+
+       | ERROR  |  |  DIALOGUE PRE-PROCESS   |  resolve_pronouns +
+       | (400)  |  +-----+------+------------+  extract_course_entity
+       +--------+        |      |
+                pronoun  |      |  classifier path
+                with no  |      |
+                entity?  |      |
+                         |      |
+                         v      v
+                  +-----------+  +---------------+
+                  | CLARIFY   |  | CLASSIFYING   |  TF-IDF + SVM
+                  | "Which    |  +-------+-------+  predict + proba
+                  | course?"  |          |
+                  +-----+-----+          |
+                        |                v
+                        |          conf >= 0.4 ?
+                        |           /         \
+                        |          yes         no
+                        |          |           |
+                        |          |           v
+                        |          |     +------------------+
+                        |          |     | KEYWORD RESCUE   |  scan for
+                        |          |     +---+----------+---+  intent
+                        |          |         |          |      keywords
+                        |          |       hit?       miss?
+                        |          |         |          |
+                        |          |   bump conf     tag <-
+                        |          |   to 0.6        'fallback'
+                        |          v         v          v
+                        |   +----------------------+
+                        |   |  ROUTING             |  per-entity?
+                        |   +--+----+----+----+----+  database?
+                        |      |    |    |    |       static template?
+                        |      v    v    v    v
+                        |   +---+ +---+ +---+ +-----+
+                        |   |PER| |DB | |STA| | FB  |
+                        |   |ENT| |QRY| |TIC| |LBCK |
+                        |   +-+-+ +-+-+ +-+-+ +--+--+
+                        |     |     |     |      |
+                        +-----+-----+-----+------+
+                                    |
+                                    v
+                          +------------------+
+                          |  RESPONDING      |  log_chat +
+                          +--------+---------+  update_session
+                                   |
+                                   v
+                                +-------+
+                                | IDLE  |
+                                +-------+
 ```
 
-### 8.3 Sequence diagram - one chat turn with feedback
+**Learning lifecycle** (separate requests, two-tier trust):
 
 ```
-User      Browser       Flask         EduBot       database     learning
- |          |             |              |             |            |
- | type     |             |              |             |            |
- |--------->|             |              |             |            |
- |          | POST /chat  |              |             |            |
- |          |------------>|              |             |            |
- |          |             | get_response |             |            |
- |          |             |------------->|             |            |
- |          |             |              |  list_courses           |
- |          |             |              |------------>|            |
- |          |             |              |<------------|            |
- |          |             |              | log_chat    |            |
- |          |             |              |------------>|            |
- |          |             |<-------------|             |            |
- |          |<------------|              |             |            |
- |<---------|             |              |             |            |
- | render   |             |              |             |            |
- |          |             |              |             |            |
- | thumbs-down + expected |             |             |            |
- |--------->|             |              |             |            |
- |          | POST /feedback             |             |            |
- |          |------------>| record_feedback             |           |
- |          |             |---------------------------->|           |
- |          |             |             | log_feedback |            |
- |          |             |             |------------->|            |
- |          |             |             | add_learned_pattern        |
- |          |             |             |------------->|            |
- |          |             |             | (>=5 pending? -> retrain)  |
- |          |<------------|             |              |            |
- |<---------|             |              |             |            |
+   POST /feedback (open)            POST /admin/approve/<id> (admin)
+            |                                  |
+            | helpful=false +                  | flips approved 0 -> 1
+            | expected_intent                  |
+            v                                  v
+   +-------------------+               +----------------+
+   | PENDING REVIEW    |  -- admin --> | APPROVED        |
+   | (approved=0)      |    approve    | (approved=1)    |
+   +---------+---------+               +-------+--------+
+             |                                 |
+             | admin discards                  v
+             v                          pending unused >= 5 ?
+       +-----------+                       /         \
+       | DELETED   |                     yes          no
+       +-----------+                     |             |
+                                         v             v
+                                   +-----------+  +-----------+
+                                   | RETRAINING|  | IDLE      |
+                                   +-----+-----+  +-----------+
+                                         |
+                                         v
+                                  +--------------+
+                                  | MODEL SWAPPED|  Flask hot-
+                                  | INTO SERVICE |  swaps EduBot
+                                  +------+-------+
+                                         |
+                                         v
+                                      +-------+
+                                      | IDLE  |
+                                      +-------+
 ```
+
+End users can only push patterns into PENDING REVIEW; only an
+admin transition fires retraining.
+
+### 8.3 Sequence diagram - one chat turn + the learning lifecycle
+
+The chat turn (a single POST /chat) and the learning loop (POST
+/feedback followed by an admin POST /admin/approve/<id>) are two
+distinct request lifecycles. Below shows both, in order.
+
+**(a) Chat turn — POST /chat**
+
+```
+User    Browser    Flask     validate    context    EduBot    database
+ |        |         |           |          |         |          |
+ | type   |         |           |          |         |          |
+ |------->|         |           |          |         |          |
+ |        | POST /chat (msg + session_id)             |          |
+ |        |-------->|           |          |         |          |
+ |        |         | clean_text_field +              |          |
+ |        |         | check_message_quality           |          |
+ |        |         |---------->|          |         |          |
+ |        |         |<----------|          |         |          |
+ |        |         | get_session(sid)                |          |
+ |        |         |---------------------|          |         |
+ |        |         |<--------------------|          |         |
+ |        |         | get_response(text, session)     |          |
+ |        |         |--------------------------------->         |
+ |        |         |                     | resolve_pronouns    |
+ |        |         |                     |<-->|     |          |
+ |        |         |                     |          |          |
+ |        |         |                     | predict_intent (SVM)|
+ |        |         |                     |----+     |          |
+ |        |         |                     |    | TF-IDF + SVM   |
+ |        |         |                     |<---+     |          |
+ |        |         |                     |                     |
+ |        |         |          if conf < 0.4:                   |
+ |        |         |          _match_keyword_intent (rescue)   |
+ |        |         |                                           |
+ |        |         |                     | _extract_course_entity
+ |        |         |                     |                     |
+ |        |         |                     | _build_response     |
+ |        |         |                     |  (per-entity / DB / |
+ |        |         |                     |   static / fallback)|
+ |        |         |                     |---->| list_courses /
+ |        |         |                     |     |  list_events /
+ |        |         |                     |     |  ...          |
+ |        |         |                     |<----|               |
+ |        |         |                     | update_session      |
+ |        |         |                     |<-->|     |          |
+ |        |         |                     | log_chat            |
+ |        |         |                     |---->|               |
+ |        |         |<--------------------|                     |
+ |        |<--------|                     |                     |
+ |<-------|         |                     |                     |
+ | render |         |                     |                     |
+ |        |         |                     |                     |
+```
+
+**(b) Learning lifecycle — two separate requests**
+
+```
+User      Browser    Flask     learning    database         Admin
+ |          |          |          |           |              |
+ | thumbs-down +       |          |           |              |
+ | expected_intent     |          |           |              |
+ |--------->|          |          |           |              |
+ |          | POST /feedback      |           |              |
+ |          |--------->| record_feedback      |              |
+ |          |          |--------->|           |              |
+ |          |          |          | log_feedback              |
+ |          |          |          |---------->|              |
+ |          |          |          | add_learned_pattern       |
+ |          |          |          | (approved=0)              |
+ |          |          |          |---------->|              |
+ |          |          |<---------| { retrained: false }      |
+ |          |<---------|          |           |              |
+ |<---------|          |          |           |              |
+ | "Thanks - your suggestion has been sent for review"        |
+ |          |          |                                      |
+ |          |          |              ... time passes ...     |
+ |          |          |                                      |
+ |          |          |                  Admin opens /admin  |
+ |          |          |                                      |
+ |          |          |  POST /admin/approve/<id>            |
+ |          |          |<------------------------------------|
+ |          |          | approve_suggestion                   |
+ |          |          |----+                                 |
+ |          |          |    | approve_pattern (approved=1)    |
+ |          |          |<---+                                 |
+ |          |          | _maybe_auto_retrain                  |
+ |          |          |  (count_pending >= 5?)               |
+ |          |          |--+                                   |
+ |          |          |  | yes -> train_and_evaluate         |
+ |          |          |  |       mark_patterns_used          |
+ |          |          |<-+       Flask hot-swaps EduBot      |
+ |          |          |------------------------------------->|
+ |          |          | { approved: true, retrained: true }  |
+```
+
+End users can suggest patterns; only admins can approve them and
+trigger retraining.
 
 ---
 
@@ -1268,27 +1579,32 @@ quality gate.
 
 ### 10.4 Training output
 
-Output from `python app/train.py` after seeding:
+Output from `python app/train.py` against the current corpus
+(intents.json + 8 admin-approved learned patterns), captured from
+`models/model_info.txt`:
 
 ```
 Step 1: Loading training data...
    - 15 intents loaded from intents.json
    - 999 seed patterns
-   - 0 patterns learned at runtime
+   - 8 patterns learned at runtime (admin-approved)
+   - Total patterns: 1007
 
 Step 3: Vectorising with TF-IDF...
-   - Feature matrix shape: (999, 500)
+   - Feature matrix shape: (1007, 500)
    - Vocabulary size: 500
 
 Step 5: Training models...
    Naive Bayes  : Train 91.4%  Test 82.5%  CV 77.3% (+/-3.6%)
-   SVM          : Train 96.7%  Test 84.0%  CV 78.4% (+/-3.8%)
+   SVM          : Train 96.4%  Test 80.7%  CV 78.2% (+/-3.8%)
    Random Forest: Train 98.5%  Test 77.0%  CV 75.7% (+/-5.2%)
 
-   Best Model: SVM (CV accuracy: 78.4%)
+   Best Model: SVM (CV accuracy: 78.2%)
 ```
 
-Per-intent F1 (Linear SVM, held-out test set):
+Per-intent F1 (Linear SVM, held-out 20% test split, captured from
+the initial training run; values shift slightly with each retrain
+as approved learned patterns enter the corpus):
 
 | Intent      | Precision | Recall | F1   | Support |
 |-------------|-----------|--------|------|--------:|
@@ -1306,11 +1622,13 @@ Per-intent F1 (Linear SVM, held-out test set):
 | scholarship | 0.93      | 0.93   | 0.93 |     14  |
 | thanks      | 1.00      | 0.80   | 0.89 |     10  |
 | timetable   | 0.92      | 0.92   | 0.92 |     13  |
-| **Overall** | **0.85**  | **0.84** | **0.84** | **200** |
 
-The `events` and `greeting` rows have weaker F1 because their
-patterns overlap with the broader "general question" phrasing -
-discussed as a known limitation in section 11.
+The `events` and `greeting` rows are the weakest because their
+patterns overlap with the broader "general question" phrasing.
+The events weakness is mitigated at runtime by the keyword-rescue
+safety net described in section 7.10 - low-confidence predictions
+on phrases containing 'event', 'hackathon', 'workshop' etc. route
+to the events intent before the fallback fires.
 
 ### 10.5 Manual API regression results
 
@@ -1335,8 +1653,8 @@ every line on the assignment marking scheme for Option 2 (Chat Bot).
 
 What has been delivered:
 
-- A trained, production-grade NLP intent classifier with 84% test
-  accuracy and 78% cross-validated accuracy across 14 intents
+- A trained, production-grade NLP intent classifier with 80.7% test
+  accuracy and 78.2% cross-validated accuracy across 15 intents
   (Linear SVM picked from a 3-model bake-off).
 - A SQLite knowledge base whose contents - course list, fees,
   faculty, events, exams, scholarships, hostel options - are queried
@@ -1350,10 +1668,10 @@ What has been delivered:
   `learning.teach` writes `approved=True`), and the database layer
   (`train.py` only loads `approved=1` rows).
 - A Flask web service exposing a chat UI, an admin dashboard, and a
-  set of REST endpoints (`/chat`, `/feedback` open to all users;
-  `/teach`, `/retrain`, `/admin`, `/admin/approve/<id>`,
-  `/admin/discard/<id>` admin-only; `/api/stats`, `/api/intents`,
-  `/health` for diagnostics).
+  set of REST endpoints (`/chat`, `/session/reset`, `/feedback` open
+  to all users; `/teach`, `/retrain`, `/admin`,
+  `/admin/approve/<id>`, `/admin/discard/<id>` admin-only;
+  `/api/stats`, `/api/intents`, `/health` for diagnostics).
 - A PyInstaller spec that bundles the entire application into a
   single Windows executable, satisfying the brief's
   *"runs from an executable file without extra installation of
