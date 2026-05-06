@@ -42,16 +42,21 @@ venv\Scripts\activate         # Windows
 
 pip install -r requirements.txt
 
-# 1) seed the knowledge base
-python app/seed_db.py
-
-# 2) train the classifier
+# 1) train the classifier (model files ARE in git; only re-run after
+#    you change intents.json or merge in approved learned patterns)
 python app/train.py
 
-# 3) run the web app
+# 2) run the web app - auto-seeds the SQLite DB on first boot
 python app.py
 # open http://localhost:5000
 ```
+
+> The SQLite DB (`data/edubot.db`) is **not** committed to git.
+> `app.py` runs `seed_db.seed_all()` automatically the first time it
+> sees an empty `courses` table, then leaves the live DB alone on
+> every subsequent boot. To re-seed manually (refreshes courses,
+> events, faculty, etc. without touching feedback / chat_history /
+> learned_patterns) run `python app/seed_db.py`.
 
 Optional: set `EDUBOT_ADMIN_PASSWORD=...` before starting `app.py` to require
 Basic Auth on `/admin`, `/teach` and `/retrain`. With it unset, the admin

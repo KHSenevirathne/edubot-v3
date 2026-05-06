@@ -43,8 +43,17 @@ secrets.json
 *.pem
 *.key
 
+# Live SQLite database. The bot WRITES to this file at runtime
+# (chat_history, feedback, learned_patterns), so tracking it in git
+# means every redeploy fights with whatever the production process
+# has been logging. Instead, app.py auto-runs seed_db.py the first
+# time it boots against an empty database (`courses` table empty).
+data/edubot.db
+data/edubot.db-journal
+data/edubot.db-shm
+data/edubot.db-wal
+
 # DO commit these so first deploy is instant:
-#   data/edubot.db        (seeded knowledge base)
 #   models/*.pkl          (trained classifier + vectoriser)
 #   models/model_info.txt
 # Render free tier has ephemeral disk; without these, every cold

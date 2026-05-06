@@ -1178,7 +1178,7 @@ edubot-v3/
 │   └── learning.py                     feedback-driven retraining loop
 ├── data/
 │   ├── intents.json                    static patterns + small-talk responses
-│   └── edubot.db                       SQLite (auto-generated)
+│   └── edubot.db                       SQLite (gitignored; auto-seeded on first boot)
 ├── models/
 │   ├── chatbot_model.pkl               pickled SVM
 │   ├── vectorizer.pkl                  pickled TF-IDF vectoriser

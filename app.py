@@ -78,6 +78,16 @@ def admin_required(view):
 # Cold start: prepare DB schema, then load the trained model.
 db.init_schema()
 
+# Auto-seed on a fresh deploy. The DB is intentionally NOT committed
+# to git (the bot writes to it at runtime, so tracking the file
+# causes merge conflicts on every redeploy). Instead, when the
+# server boots against an empty courses table we populate the seed
+# tables ourselves. Idempotent on subsequent boots.
+if db.stats()['courses'] == 0:
+    print("[boot] empty knowledge base detected - running seed_db.seed_all()")
+    import seed_db                              # noqa: E402
+    seed_db.seed_all()
+
 print("Loading EduBot model...")
 bot = EduBot()
 print("EduBot ready.")
