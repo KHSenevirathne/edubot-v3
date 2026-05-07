@@ -469,6 +469,7 @@ body {
     padding: 16px 24px 20px;
     border-top: 1px solid var(--border);
     background: var(--surface);
+    position: relative;          /* anchor for the toast container */
 }
 
 .input-wrapper {
@@ -546,6 +547,118 @@ body {
 .input-hint {
     text-align: center; font-size: 11px;
     color: var(--text-muted); margin-top: 10px; font-weight: 500;
+}
+
+/* ---------- Inline input warning ---------- */
+/* Anchored to the chat-input-area so the warning shows right above the
+   text box where the user typed - more contextual than a corner toast. */
+
+.toast-container {
+    position: absolute;
+    /* Sit just above the input-wrapper, with a small gap so the
+       warning visually points down at the input. */
+    left: 24px;
+    right: 24px;
+    bottom: calc(100% - 8px);
+    display: flex;
+    flex-direction: column-reverse;     /* newest toast closest to the input */
+    gap: 8px;
+    z-index: 50;
+    pointer-events: none;
+}
+
+.toast {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 10px 10px 10px 12px;
+    border-radius: 12px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    box-shadow:
+        0 12px 28px -10px rgba(15, 23, 42, 0.18),
+        0 3px 8px -2px rgba(15, 23, 42, 0.06);
+    pointer-events: auto;
+    opacity: 0;
+    transform: translateY(10px) scale(0.98);
+    transition: opacity 0.2s ease, transform 0.2s ease;
+    font-family: var(--font);
+    font-size: 12.5px;
+    line-height: 1.45;
+    color: var(--text);
+}
+
+.toast-show { opacity: 1; transform: translateY(0) scale(1); }
+.toast-hide { opacity: 0; transform: translateY(10px) scale(0.98); }
+
+.toast-icon {
+    flex-shrink: 0;
+    width: 26px; height: 26px;
+    display: flex; align-items: center; justify-content: center;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 700;
+    line-height: 1;
+}
+
+.toast-text {
+    flex: 1;
+    color: var(--text);
+    font-weight: 500;
+    padding-top: 4px;
+}
+
+.toast-close {
+    flex-shrink: 0;
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    width: 24px; height: 24px;
+    border-radius: 6px;
+    font-size: 18px;
+    line-height: 1;
+    color: var(--text-muted);
+    font-family: inherit;
+    transition: background 0.15s, color 0.15s;
+    padding: 0;
+    margin-top: 2px;
+}
+.toast-close:hover {
+    background: var(--bg);
+    color: var(--text);
+}
+
+/* Variants - left accent bar + tinted icon */
+.toast-warning {
+    border-left: 4px solid var(--warning);
+    background: linear-gradient(0deg, var(--surface), var(--surface)),
+                linear-gradient(0deg, rgba(245, 158, 11, 0.06), rgba(245, 158, 11, 0.06));
+    background-blend-mode: normal;
+}
+.toast-warning .toast-icon {
+    background: rgba(245, 158, 11, 0.15);
+    color: var(--warning);
+}
+
+.toast-error {
+    border-left: 4px solid var(--danger);
+}
+.toast-error .toast-icon {
+    background: rgba(239, 68, 68, 0.15);
+    color: var(--danger);
+}
+
+.toast-info {
+    border-left: 4px solid var(--primary);
+}
+.toast-info .toast-icon {
+    background: var(--primary-light);
+    color: var(--primary);
+}
+
+@media (max-width: 480px) {
+    .toast-container { left: 12px; right: 12px; }
+    .toast { font-size: 12px; padding: 8px 10px; }
 }
 
 /* ---------- Modal (teach the bot) ---------- */

@@ -165,16 +165,15 @@ function sendMessage() {
     const failedClient = !v.ok;
     const q = v.ok ? checkQuality(v.value) : { ok: false, reason: v.reason };
     if (failedClient || !q.ok) {
-        // Shake the input and surface the reason as a chat message so
-        // the user knows WHY their input was rejected (not just "send
-        // is disabled").
+        // Shake the input and surface the reason as a themed toast.
+        // Don't pollute the chat history with bot bubbles for things
+        // the user typed but never actually sent.
         userInput.classList.remove('input-error');
         // eslint-disable-next-line no-void
         void userInput.offsetWidth;
         userInput.classList.add('input-error');
         const reason = q.reason || v.reason || 'Invalid input.';
-        appendMessage(reason, 'bot', 0, 'error', 'fallback');
-        updateMood(0, 'fallback', 'error');
+        showToast(reason, 'warning');
         return;
     }
     const message = v.value;
@@ -202,10 +201,11 @@ function sendMessage() {
             removeTypingIndicator();
             if (!ok) {
                 // Server-side validation rejection (400) - show the
-                // reason inline rather than a generic error.
+                // reason as a toast, not as a fake bot bubble. The
+                // user's original message is still in the transcript
+                // so they can edit + resend.
                 const reason = data.error || 'Sorry, that input was rejected by the server.';
-                appendMessage(reason, 'bot', 0, 'error', 'fallback');
-                updateMood(0, 'fallback', 'error');
+                showToast(reason, 'warning');
                 return;
             }
             lastBotTurn = {
@@ -504,6 +504,83 @@ function currentTime() {
     return new Date().toLocaleTimeString('en-US', {
         hour: 'numeric', minute: '2-digit', hour12: true,
     });
+}
+
+// ---------- Toast notifications ----------
+//
+// Themed slide-in popup for input-validation rejections (and any
+// other transient warnings). Used instead of a fake bot bubble so
+// the chat history stays clean - the user typed something but
+// never actually sent a message; nothing belongs in the transcript.
+
+const TOAST_AUTO_DISMISS_MS = 4500;
+const ICONS = {
+    warning: '⚠',     // ⚠
+    error:   '✖',     // ✖
+    info:    'ℹ',     // ℹ
+};
+
+function ensureToastContainer() {
+    let c = document.getElementById('toastContainer');
+    if (!c) {
+        c = document.createElement('div');
+        c.id = 'toastContainer';
+        c.className = 'toast-container';
+        c.setAttribute('role', 'status');
+        c.setAttribute('aria-live', 'polite');
+        // Anchor inside the chat input area so the warning floats just
+        // above the text box, not in the corner of the screen.
+        const host = document.querySelector('.chat-input-area') || document.body;
+        host.appendChild(c);
+    }
+    return c;
+}
+
+function showToast(message, type = 'warning') {
+    const container = ensureToastContainer();
+
+    const toast = document.createElement('div');
+    toast.className = `toast toast-${type}`;
+    toast.setAttribute('role', type === 'error' ? 'alert' : 'status');
+
+    const icon = document.createElement('span');
+    icon.className = 'toast-icon';
+    icon.textContent = ICONS[type] || ICONS.warning;
+    icon.setAttribute('aria-hidden', 'true');
+
+    const text = document.createElement('span');
+    text.className = 'toast-text';
+    text.textContent = message;
+
+    const close = document.createElement('button');
+    close.className = 'toast-close';
+    close.type = 'button';
+    close.setAttribute('aria-label', 'Dismiss notification');
+    close.textContent = '×';      // ×
+    close.addEventListener('click', () => removeToast(toast));
+
+    toast.appendChild(icon);
+    toast.appendChild(text);
+    toast.appendChild(close);
+    container.appendChild(toast);
+
+    // Force reflow then add the show class so the entry transition fires.
+    // eslint-disable-next-line no-void
+    void toast.offsetWidth;
+    toast.classList.add('toast-show');
+
+    const timer = setTimeout(() => removeToast(toast), TOAST_AUTO_DISMISS_MS);
+    toast.dataset.timerId = String(timer);
+}
+
+function removeToast(toast) {
+    if (!toast || !toast.parentNode) return;
+    if (toast.dataset.timerId) clearTimeout(Number(toast.dataset.timerId));
+    toast.classList.remove('toast-show');
+    toast.classList.add('toast-hide');
+    setTimeout(() => {
+        if (toast.parentNode) toast.parentNode.removeChild(toast);
+    }, 220);
 }
 
 // ---------- Mood (emotional intelligence) ----------
