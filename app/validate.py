@@ -1,60 +1,26 @@
-"""
-validate.py - Input validation helpers for EduBot v3
-
-The chat UI is publicly reachable once the bot is deployed, so every
-field that crosses the network boundary needs to be sanity-checked
-before it touches the model or the database.
-
-Each helper raises ValidationError on failure with a human-readable
-message. app.py turns those into HTTP 400 responses with a JSON body.
-"""
-
 import re
 
-
-# Maximum length for any single text field. Picked to be comfortably
-# above any genuine question (longest real-world chat message in our
-# corpus is ~120 chars) but well below the 1 MB JSON body limit Flask
-# would otherwise allow.
+# Maximum length for any single text field.
 MAX_MESSAGE_LEN = 500
 MAX_PATTERN_LEN = 200
 MIN_TEXT_LEN = 1
 
-# --- Quality thresholds for chat messages -------------------------
-# These are heuristics meant to discourage random keyboard mashing
-# ("aijdsfklajsdfjasldkf...") and numeric spam (phone numbers, account
-# numbers) without rejecting legitimate input like emails, URLs, years
-# or prices.
-
 # Longest unbroken alphabetic run we'll allow inside a single token.
-# The longest English words in routine use are 28 chars
-# ('antidisestablishmentarianism'); anything beyond 30 is almost
-# always gibberish. Email locals like 'info' or 'student.support'
-# pass easily.
 MAX_ALPHA_RUN = 30
 
-# Longest unbroken digit run we'll allow. Years (4), prices ('$3000'
-# = 4), and student IDs (up to 9) all pass. A 10+ digit run looks
-# like a phone number / account number / SSN, none of which belong
-# in a question to a campus chatbot.
-MAX_DIGIT_RUN = 9
+# Longest unbroken digit run we'll allow.
+MAX_DIGIT_RUN = 15
 
-# Minimum proportion of letters in the message. "########" or "12345"
-# fail this; "I have $3000 - is that enough for 2024?" passes
+# Minimum proportion of letters in the message.
 # (>30% letters).
 MIN_LETTER_RATIO = 0.30
 
 _ALPHA_RUN_RE = re.compile(r'[A-Za-z]{' + str(MAX_ALPHA_RUN + 1) + r',}')
 _DIGIT_RUN_RE = re.compile(r'\d{' + str(MAX_DIGIT_RUN + 1) + r',}')
 _LETTER_RE    = re.compile(r'[A-Za-z]')
+_PHONE_LIKE_RE = re.compile(r'^[\d\s+\-()]+$')
 
 # Strip ASCII control codes (NUL, BEL, VT, FF, etc.) but keep newlines
-# and tabs because some bot responses include them. Also strip the
-# zero-width / direction-override / line-separator / BOM Unicode chars
-# used in homograph attacks. We use \uXXXX escapes (not literal Unicode
-# characters) to keep this regex robust against editor / encoding
-# accidents - U+2028 and U+2029 in particular can break source files
-# if dropped in literally.
 _BAD_CHARS = re.compile(
     '['
     '\x00-\x08\x0b\x0c\x0e-\x1f\x7f'   # ASCII control codes
@@ -141,9 +107,13 @@ def check_message_quality(text, field='message'):
             "aren't valid questions - try asking in words"
         )
 
-    # 3. Almost-no-letters input (e.g. "1234567890", "########", "..!!.!").
+    # 3. Almost-no-letters input (e.g. "########", "..!!.!").
     #    Only enforce on messages with at least 4 chars; very short
     #    inputs like 'ok', '?' are fine even with low letter ratio.
+    #    Phone-number-shaped input (digits + space/+/-/parens) is
+    #    exempt so users can submit a contact number on its own.
+    if _PHONE_LIKE_RE.match(text):
+        return
     if len(text) >= 4:
         letters = len(_LETTER_RE.findall(text))
         if letters / max(len(text), 1) < MIN_LETTER_RATIO:

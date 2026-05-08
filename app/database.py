@@ -1,28 +1,3 @@
-"""
-database.py - SQLite Persistence Layer for EduBot v3
-
-The brief requires that "facts that can change/update with time must be
-obtained from a database". This module owns all database access:
-schema creation, seeding, querying, and writes.
-
-Design choice: SQLite (file-based, zero-config, ships inside the
-PyInstaller bundle without a separate DB server).
-
-Tables:
-  - courses          : academic programs offered (dynamic)
-  - faculty          : staff directory (dynamic)
-  - events           : upcoming campus events (dynamic)
-  - exams            : exam timetable (dynamic)
-  - scholarships     : scholarship options (dynamic)
-  - hostel_rooms     : accommodation options (dynamic)
-  - kv_facts         : flexible key-value store for misc facts
-                       (library hours, contact info, timetable...)
-  - feedback         : user thumbs-up/down logs (drives ML loop)
-  - learned_patterns : new patterns the bot was taught at runtime
-                       (consumed by train.py, drives ML loop)
-  - chat_history     : every turn for analytics / test reports
-"""
-
 import os
 import sqlite3
 from datetime import datetime

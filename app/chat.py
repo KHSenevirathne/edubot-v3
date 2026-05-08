@@ -1,16 +1,3 @@
-"""
-chat.py - Inference Engine for EduBot v3
-
-Three-tier responsibility (per the assignment brief):
-  - Loads the trained intent classifier (TIER 2: Inference Engine)
-  - Routes "dynamic" intents through SQLite (TIER 3: Database)
-  - Falls back to intents.json templates for "static" small-talk
-  - Logs every turn to chat_history for analytics
-
-The DYNAMIC_INTENTS set is the single source of truth that decides
-whether a response is built from live DB data or from a stock template.
-"""
-
 import json
 import pickle
 import random

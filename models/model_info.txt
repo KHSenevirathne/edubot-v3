@@ -1,8 +1,0 @@
-Model: SVM
-Train accuracy: 96.4%
-Test accuracy:  80.7%
-CV accuracy:    78.2%
-Intents: 15
-Total patterns: 1007
-Seed patterns: 999
-Learned patterns: 8

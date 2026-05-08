@@ -1,30 +1,3 @@
-"""
-learning.py - The "machine learning that updates its own knowledge base"
-required by the assignment marking scheme.
-
-EduBot's ML loop runs on TWO trust tiers to protect the model from data
-poisoning:
-
-    TIER 1 - End user (open to anyone using the chat UI):
-       1. Ask a question
-       2. Click thumbs-up / thumbs-down on the answer
-       3. On thumbs-down, optionally pick the "right" intent
-          The (pattern, intent) lands in learned_patterns with
-          approved=0 - it is NOT used in training yet.
-
-    TIER 2 - Admin (admin dashboard, optionally password-protected):
-       4. Reviews every pending suggestion
-       5. Clicks Approve (sets approved=1) or Discard (deletes row)
-       6. May also "Teach the bot" directly - that goes in pre-approved
-          since admins are trusted.
-       7. Once AUTO_RETRAIN_THRESHOLD approved-not-yet-used patterns
-          accumulate, OR an admin clicks Retrain, train.py runs and
-          merges them into the next model.
-
-This file owns the bridge between user feedback, admin actions, and
-the training pipeline.
-"""
-
 import os
 import sys
 

@@ -1,5 +1,5 @@
 """
-test_smoke.py - End-to-end smoke tests for EduBot v3.
+End-to-end smoke tests.
 
 These tests are part of the assignment's "test plan and test data"
 deliverable. They cover:

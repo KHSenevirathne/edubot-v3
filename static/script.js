@@ -1,20 +1,3 @@
-// EduBot v3 frontend (chat UI only).
-//
-// Trust-tier note: end users can ONLY (a) chat and (b) flag answers
-// thumbs-up / thumbs-down. The thumbs-down picker submits a SUGGESTION
-// via /feedback; the suggestion stays in 'pending review' until an admin
-// approves it on /admin. There is no direct "teach" path from this UI.
-//
-// Capabilities here:
-//   - sending messages with input validation
-//   - per-browser session ID so the server can do multi-turn dialogue
-//     (resolving "it" / "this course" to a previously mentioned entity)
-//   - mood-changing avatar driven by the bot's confidence + answer source
-//   - optional voice input (Web Speech API) and read-aloud (speechSynthesis)
-//   - XSS-safe rendering of user messages
-//   - feedback (thumbs-up / thumbs-down) buttons under every bot reply
-//   - on thumbs-down: inline correction picker -> POST /feedback
-
 const MAX_MESSAGE_LEN = 500;
 const MIN_TEXT_LEN = 1;
 

@@ -1,21 +1,3 @@
-"""
-app.py - Flask Web Server for EduBot v3
-
-Wires the natural-language interface (templates + static) to the
-inference engine (chat.EduBot) and the learning loop (learning.py).
-
-Endpoints:
-  GET  /             chat UI
-  POST /chat         classify message, return DB- or template-based answer
-  POST /feedback     persist thumbs-up/down (drives the ML loop)
-  POST /teach        admin/user explicitly maps pattern -> intent
-  POST /retrain      force a model retrain
-  GET  /admin        admin dashboard (DB stats, recent feedback)
-  GET  /api/intents  list available intents (used by the teach modal)
-  GET  /api/stats    JSON stats endpoint (used in tests)
-  GET  /health       liveness probe
-"""
-
 import os
 import sys
 import json
@@ -45,13 +27,6 @@ def _handle_validation_error(err):
     """Turn ValidationError into a clean 400 response."""
     return jsonify({'error': err.message, 'field': err.field}), 400
 
-
-# ---------------- Admin auth ----------------
-# Set EDUBOT_ADMIN_PASSWORD in the environment to require Basic Auth on
-# /admin and any endpoint that mutates the model. If unset (typical
-# during local development), admin endpoints are open and we log a
-# warning at startup.
-
 ADMIN_PASSWORD = os.environ.get('EDUBOT_ADMIN_PASSWORD')
 if not ADMIN_PASSWORD:
     print("[admin] EDUBOT_ADMIN_PASSWORD not set - /admin is OPEN. "
@@ -78,11 +53,6 @@ def admin_required(view):
 # Cold start: prepare DB schema, then load the trained model.
 db.init_schema()
 
-# Auto-seed on a fresh deploy. The DB is intentionally NOT committed
-# to git (the bot writes to it at runtime, so tracking the file
-# causes merge conflicts on every redeploy). Instead, when the
-# server boots against an empty courses table we populate the seed
-# tables ourselves. Idempotent on subsequent boots.
 if db.stats()['courses'] == 0:
     print("[boot] empty knowledge base detected - running seed_db.seed_all()")
     import seed_db                              # noqa: E402
@@ -311,9 +281,6 @@ def health():
 
 
 if __name__ == '__main__':
-    # Local development entry point. In production (Render, etc.) the
-    # service starts gunicorn directly against the `app` object above
-    # via the Procfile, so this block is bypassed.
     port = int(os.environ.get('PORT', 5000))
     debug = os.environ.get('FLASK_DEBUG', '1') == '1'
     app.run(host='0.0.0.0', port=port, debug=debug)

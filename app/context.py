@@ -1,20 +1,3 @@
-"""
-context.py - Session-based dialogue state for EduBot v3.
-
-Holds a small per-session memory so the bot can carry a real
-"consulting" conversation across turns: resolving pronouns ("it",
-"this one", "that course") to the previously discussed entity, and
-remembering which programme the user is currently asking about.
-
-This is the dialogue-management layer that the brief calls for under
-"Effective implementation of NLP" - intent classification on its own
-treats every message as independent.
-
-State is in-memory and per-process (fine for a single-instance Flask
-deployment; for multi-worker production you would back this with
-Redis or the database).
-"""
-
 import re
 import time
 import uuid

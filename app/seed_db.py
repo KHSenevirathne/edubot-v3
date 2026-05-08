@@ -1,12 +1,3 @@
-"""
-seed_db.py - Populate the SQLite database with the initial university data.
-
-Run once, after init_schema(). Idempotent: re-running clears the seed
-tables first so the DB matches the current seed file. Feedback,
-learned_patterns and chat_history are NOT cleared so user-taught
-patterns survive re-seeding.
-"""
-
 import os
 import sys
 

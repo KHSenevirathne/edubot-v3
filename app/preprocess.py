@@ -1,12 +1,3 @@
-"""
-preprocess.py - Text Preprocessing Module for EduBot v3
-Handles tokenization, lemmatization, and text cleaning for the NLP pipeline.
-
-Implements a self-contained preprocessing layer (no NLTK data downloads
-required) so the packaged executable can run on a clean machine without
-network access.
-"""
-
 import re
 
 # English stopwords list. Hand-tuned: words that carry intent signal

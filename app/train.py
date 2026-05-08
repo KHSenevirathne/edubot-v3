@@ -1,19 +1,3 @@
-"""
-train.py - Model Training Pipeline for EduBot v3
-
-Loads training data from TWO sources:
-  1. data/intents.json   - hand-curated patterns (the seed corpus)
-  2. learned_patterns DB - patterns the bot has been TAUGHT at runtime
-
-Trains three classifiers (Multinomial Naive Bayes, Linear SVM, Random
-Forest), compares them by 5-fold cross-validation accuracy, and pickles
-the winner along with its TF-IDF vectoriser.
-
-Running this script is the closing step of EduBot's machine-learning
-loop:
-    user feedback -> learned_patterns -> retrain -> better model
-"""
-
 import json
 import pickle
 import os
