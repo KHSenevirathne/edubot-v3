@@ -75,12 +75,13 @@ const BAD_CHARS_RE = new RegExp(
 // Quality thresholds - kept in sync with app/validate.py so client and
 // server agree on what counts as junk input.
 const MAX_ALPHA_RUN   = 30;     // longest unbroken letter run
-const MAX_DIGIT_RUN   = 9;      // longest unbroken digit run
+const MAX_DIGIT_RUN   = 15;     // longest unbroken digit run
 const MIN_LETTER_RATIO = 0.30;  // min proportion of letters in the message
 
 const ALPHA_RUN_RE = new RegExp(`[A-Za-z]{${MAX_ALPHA_RUN + 1},}`);
 const DIGIT_RUN_RE = new RegExp(`\\d{${MAX_DIGIT_RUN + 1},}`);
 const LETTER_RE    = /[A-Za-z]/g;
+const PHONE_LIKE_RE = /^[\d\s+\-()]+$/;
 
 function trimAndCheck(raw, minLen, maxLen) {
     if (typeof raw !== 'string') return { ok: false, reason: 'invalid input' };
@@ -106,6 +107,11 @@ function checkQuality(text) {
             ok: false,
             reason: "Long number sequences (phone numbers, account numbers) aren't valid questions. Ask in words.",
         };
+    }
+    // Phone-number-shaped input (digits + space/+/-/parens) is exempt
+    // from the letter-ratio check so users can submit a contact number.
+    if (PHONE_LIKE_RE.test(text)) {
+        return { ok: true };
     }
     if (text.length >= 4) {
         const letters = (text.match(LETTER_RE) || []).length;
