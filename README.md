@@ -12,6 +12,10 @@ multi-turn dialogue, an emotional-feedback avatar, and voice I/O:
 - **Machine-learning loop with trust gate** - users flag wrong answers via
   thumbs-down; suggestions land in an admin review queue; approved patterns
   trigger an auto-retrain.
+- **Keyword-rescue safety net** - when the classifier returns sub-threshold
+  confidence (<0.4), the message is scanned for an unambiguous intent
+  keyword (event, hostel, scholarship, lecturer, ...) before falling back,
+  so close-to-the-line questions still land on the right answer.
 - **Emotional intelligence** - mood-changing avatar (happy / neutral /
   confused / thinking) reflects the bot's confidence in the last reply.
 - **Voice I/O** - Web Speech API microphone for spoken questions, optional
@@ -178,9 +182,9 @@ confidence, so historical context is preserved as you scroll back.
 Two layers, kept in sync:
 
 - **Client side** (`static/script.js`): rejects gibberish (alpha runs >
-  30 chars), phone-number-style digit runs (>= 10 digits), and
-  mostly-symbol input. The send button stays disabled and a tooltip
-  shows the reason.
+  30 chars), phone-number-style digit runs (> 15 digits), and
+  mostly-symbol input (letter ratio < 30%). The send button stays
+  disabled and a tooltip shows the reason.
 - **Server side** (`app/validate.py:check_message_quality`): same three
   rules enforced again so the API can't be bypassed. Validation errors
   return HTTP 400 with `{ error, field }` and are surfaced inline in
@@ -222,4 +226,11 @@ user message -> /chat -> bot reply (with confidence + source badge)
 End users **cannot** poison the model directly - their suggestions stay
 behind the admin gate.
 
-The full design is documented in `docs/TECHNICAL_DOCUMENTATION.md`.
+## Further reading
+
+| File                              | What's in it                                  |
+|-----------------------------------|-----------------------------------------------|
+| `docs/TECHNICAL_DOCUMENTATION.md` | Full system design, architecture, rationale  |
+| `docs/PSEUDOCODE.md`              | Pseudocode for the main algorithms           |
+| `docs/DIAGRAMS.md`                | Architecture, ER, and dialogue-flow diagrams |
+| `docs/CODE_SNIPPETS.md`           | Annotated highlights of the key modules      |
